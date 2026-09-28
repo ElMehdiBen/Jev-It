@@ -785,14 +785,39 @@ app.get('/api/admin/analytics', handleRoute(async (request, response) => {
   if (!platformAdminEmails.has(request.auth.user.email)) return response.status(403).json({ error: 'Platform administrator access is required.' })
   const db = await getDb()
   const { from, to } = analyticsRange(request.query)
-  const rows = await db.collection('api_call_events').aggregate([
+  const [analytics] = await db.collection('api_call_events').aggregate([
     { $match: { timestamp: { $gte: from, $lte: to } } },
-    { $group: { _id: '$workspaceId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
-    { $sort: { calls: -1 } },
+    { $facet: {
+      summary: [{ $group: {
+        _id: null,
+        calls: { $sum: 1 },
+        successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } },
+        failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } },
+        averageLatencyMs: { $avg: '$latencyMs' },
+        latencyPercentiles: { $percentile: { input: '$latencyMs', p: [0.5, 0.95], method: 'approximate' } },
+      } }],
+      timeline: [
+        { $group: { _id: { $dateTrunc: { date: '$timestamp', unit: 'day' } }, calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } } } },
+        { $sort: { _id: 1 } },
+      ],
+      byWorkspace: [
+        { $group: { _id: '$workspaceId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
+        { $sort: { calls: -1 } },
+      ],
+    } },
   ]).toArray()
-  const workspaces = await db.collection('workspaces').find({ id: { $in: rows.map((row) => row._id) } }, { projection: { _id: 0, id: 1, name: 1, plan: 1 } }).toArray()
-  const names = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace]))
-  response.json({ range: { from, to }, workspaces: rows.map((row) => ({ workspaceId: row._id, ...names[row._id], calls: row.calls, successes: row.successes, failures: row.failures, averageLatencyMs: row.averageLatencyMs })) })
+  const [workspaces, users] = await Promise.all([
+    db.collection('workspaces').find({}, { projection: { _id: 0, id: 1, name: 1, plan: 1, usage: 1, createdAt: 1 } }).sort({ createdAt: -1 }).toArray(),
+    db.collection('users').countDocuments(),
+  ])
+  const usage = Object.fromEntries(analytics.byWorkspace.map((row) => [row._id, row]))
+  const summary = analytics.summary[0] || { calls: 0, successes: 0, failures: 0, averageLatencyMs: 0, latencyPercentiles: [0, 0] }
+  response.json({
+    range: { from, to },
+    summary: { ...summary, p50LatencyMs: summary.latencyPercentiles?.[0] || 0, p95LatencyMs: summary.latencyPercentiles?.[1] || 0, latencyPercentiles: undefined, workspaces: workspaces.length, users },
+    timeline: analytics.timeline.map((item) => ({ date: item._id, calls: item.calls, successes: item.successes, failures: item.failures })),
+    workspaces: workspaces.map((workspace) => ({ workspaceId: workspace.id, name: workspace.name, plan: workspace.plan, classifiers: workspace.usage?.activeClassifiers || 0, createdAt: workspace.createdAt, calls: usage[workspace.id]?.calls || 0, successes: usage[workspace.id]?.successes || 0, failures: usage[workspace.id]?.failures || 0, averageLatencyMs: usage[workspace.id]?.averageLatencyMs || 0 })).sort((left, right) => right.calls - left.calls),
+  })
 }))
 
 async function requireProjectKey(request, response, next) {
