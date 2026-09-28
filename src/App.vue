@@ -1,7 +1,9 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 
-const health = ref({ mongo: false, openai: false, typesafe: false, model: 'gpt-6-luna' })
+const health = ref({ mongo: false, openai: false, typesafe: false, authConfigured: false, model: 'gpt-6-luna' })
+const booting = ref(true)
+const auth = ref({ authenticated: false, user: null, workspace: null, quota: null })
 const classifiers = ref([])
 const currentView = ref('builder')
 const session = ref(null)
@@ -22,6 +24,8 @@ const keyStatus = ref({ active: false })
 const revealedKey = ref('')
 const toast = ref('')
 const chatLog = ref(null)
+const analytics = ref(null)
+const analyticsLoading = ref(false)
 
 const questionEntries = computed(() => Object.entries(classifierDraft.value?.questions || {}))
 const draftEntries = computed(() => Object.entries(draft.value?.questions || {}))
@@ -40,6 +44,8 @@ const directJevCurl = computed(() => `curl -X POST https://api.typesafe.ai/v1/sy
   -H 'Authorization: Bearer YOUR_TYPESAFE_API_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '${directJevPayload.value}'`)
+const maxTimelineCalls = computed(() => Math.max(1, ...(analytics.value?.timeline || []).map((item) => item.calls)))
+const pageTitle = computed(() => currentView.value === 'builder' ? 'Classifier builder' : currentView.value === 'keys' ? 'API keys' : currentView.value === 'analytics' ? 'Usage analytics' : selected.value?.name)
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -59,6 +65,34 @@ function notify(message) {
 
 async function loadHealth() {
   try { health.value = await api('/api/health') } catch (error) { pageError.value = error.message }
+}
+
+async function loadAuthSession() {
+  try {
+    const response = await fetch('/api/auth/session')
+    auth.value = response.ok ? await response.json() : { authenticated: false, user: null, workspace: null, quota: null }
+  } catch {
+    auth.value = { authenticated: false, user: null, workspace: null, quota: null }
+  }
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' })
+  auth.value = { authenticated: false, user: null, workspace: null, quota: null }
+  classifiers.value = []
+  session.value = null
+}
+
+async function openAnalytics() {
+  currentView.value = 'analytics'
+  selected.value = null
+  analyticsLoading.value = true
+  pageError.value = ''
+  try {
+    analytics.value = await api('/api/analytics')
+    await loadAuthSession()
+  } catch (error) { pageError.value = error.message }
+  finally { analyticsLoading.value = false }
 }
 
 async function loadClassifiers() {
@@ -113,7 +147,7 @@ async function createClassifier() {
   creating.value = true
   try {
     const classifier = await api(`/api/builder/sessions/${session.value.id}/create`, { method: 'POST' })
-    await loadClassifiers()
+    await Promise.all([loadClassifiers(), loadAuthSession()])
     notify('Classifier created')
     await openClassifier(classifier.id)
   } catch (error) { pageError.value = error.message }
@@ -206,6 +240,7 @@ async function runTests() {
       body: JSON.stringify({ states }),
     })
     testResults.value = result.results
+    await loadAuthSession()
   } catch (error) { pageError.value = error.message }
   finally { testing.value = false }
 }
@@ -265,13 +300,35 @@ function answerValue(answer) {
 
 onMounted(async () => {
   await loadHealth()
-  await Promise.all([loadClassifiers(), loadKeyStatus()])
-  await newBuilder()
+  if (health.value.mongo) await loadAuthSession()
+  if (auth.value.authenticated) {
+    await Promise.all([loadClassifiers(), loadKeyStatus()])
+    await newBuilder()
+  }
+  booting.value = false
 })
 </script>
 
 <template>
-  <div class="studio-shell">
+  <section v-if="booting" class="auth-screen auth-loading"><span class="brand-bars"><i></i><i></i><i></i></span><p>Opening Jev-It Studio…</p></section>
+
+  <section v-else-if="!auth.authenticated" class="auth-screen">
+    <div class="auth-brand"><span class="brand-bars"><i></i><i></i><i></i></span><span>Jev-It <b>Studio</b></span></div>
+    <div class="auth-copy">
+      <span class="overline">Your classifier workspace</span>
+      <h1>Build decisions<br><em>through conversation.</em></h1>
+      <p>Sign in to keep your classifiers, deployments, API keys, quotas, and usage analytics inside your own private workspace.</p>
+      <a v-if="health.mongo && health.authConfigured" class="google-button" href="/api/auth/google"><span>G</span> Continue with Google <b>→</b></a>
+      <div v-else class="auth-setup">
+        <b>{{ !health.mongo ? 'MongoDB is not connected.' : 'Google SSO is not configured.' }}</b>
+        <code v-if="!health.authConfigured">GOOGLE_CLIENT_ID=…<br>GOOGLE_CLIENT_SECRET=…</code>
+        <button type="button" @click="loadHealth().then(loadAuthSession)">Check configuration</button>
+      </div>
+    </div>
+    <div class="auth-foot"><span>5 classifiers on Free</span><span>1,000 monthly JEV calls</span><span>Private by workspace</span></div>
+  </section>
+
+  <div v-else class="studio-shell">
     <aside class="sidebar">
       <a class="studio-brand" href="#" @click.prevent="newBuilder">
         <span class="brand-bars"><i></i><i></i><i></i></span>
@@ -297,9 +354,22 @@ onMounted(async () => {
       </nav>
 
       <div class="sidebar-bottom">
+        <button type="button" :class="{ active: currentView === 'analytics' }" @click="openAnalytics">
+          <span>⌁</span> Usage analytics
+        </button>
         <button type="button" :class="{ active: currentView === 'keys' }" @click="currentView = 'keys'; selected = null">
           <span>⌁</span> API keys <i :class="['tiny-dot', { on: keyStatus.active }]"></i>
         </button>
+        <div class="quota-mini" v-if="auth.quota">
+          <div><span>Free plan</span><b>{{ auth.quota.apiCalls.used }} / {{ auth.quota.apiCalls.limit }} calls</b></div>
+          <i><b :style="{ width: `${Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)}%` }"></b></i>
+        </div>
+        <div class="account-mini">
+          <img v-if="auth.user.picture" :src="auth.user.picture" alt="" referrerpolicy="no-referrer" />
+          <span v-else>{{ auth.user.name.slice(0, 1) }}</span>
+          <div><b>{{ auth.user.name }}</b><small>{{ auth.user.email }}</small></div>
+          <button type="button" title="Sign out" @click="logout">↗</button>
+        </div>
         <div class="service-state">
           <span><i :class="{ on: health.mongo }"></i> MongoDB</span>
           <span><i :class="{ on: health.openai }"></i> Luna</span>
@@ -312,9 +382,9 @@ onMounted(async () => {
       <header class="studio-topbar">
         <div>
           <span class="crumb">Workspace /</span>
-          <b>{{ currentView === 'builder' ? 'Classifier builder' : currentView === 'keys' ? 'API keys' : selected?.name }}</b>
+          <b>{{ pageTitle }}</b>
         </div>
-        <div class="top-status"><i></i> Local workspace</div>
+        <div class="top-status"><i></i> {{ auth.workspace.name }}</div>
       </header>
 
       <div v-if="pageError" class="global-error"><span>!</span>{{ pageError }}<button @click="pageError = ''">×</button></div>
@@ -537,7 +607,7 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-else class="keys-view">
+      <section v-else-if="currentView === 'keys'" class="keys-view">
         <div class="keys-hero"><span class="overline">Project access</span><h1>API keys</h1><p>Keys authenticate calls to your deployed classifiers. JEV and OpenAI credentials always remain server-side.</p></div>
         <div class="key-card">
           <div class="key-card-head"><div class="key-symbol">⌁</div><div><h2>{{ keyStatus.active ? 'Production key' : 'No active key' }}</h2><p>{{ keyStatus.active ? `Created ${formatDate(keyStatus.createdAt)}` : 'Generate a key to call /api/classify.' }}</p></div><span v-if="keyStatus.active" class="active-key"><i></i> Active</span></div>
@@ -546,6 +616,36 @@ onMounted(async () => {
           <div class="key-actions"><button class="primary" type="button" @click="rotateKey">{{ keyStatus.active ? 'Rotate key' : 'Generate key' }} <span>→</span></button><button v-if="keyStatus.active" type="button" @click="revokeKey">Revoke</button></div>
         </div>
         <div class="security-grid"><article><span>01</span><h3>Shown once</h3><p>The plaintext secret is returned only when it is generated.</p></article><article><span>02</span><h3>Hashed at rest</h3><p>MongoDB stores a one-way SHA-256 digest, never the original key.</p></article><article><span>03</span><h3>Instant rotation</h3><p>Rotating revokes the old key before creating the replacement.</p></article></div>
+      </section>
+
+      <section v-else class="analytics-view">
+        <div class="analytics-hero">
+          <div><span class="overline">Last 30 days</span><h1>Usage, at a glance.</h1><p>Every playground and production call, without storing states or model responses.</p></div>
+          <div class="quota-card" v-if="auth.quota"><span>September quota</span><strong>{{ auth.quota.apiCalls.used.toLocaleString() }} <small>/ {{ auth.quota.apiCalls.limit.toLocaleString() }}</small></strong><i><b :style="{ width: `${Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)}%` }"></b></i><p>Resets {{ formatDate(auth.quota.apiCalls.resetsAt) }}</p></div>
+        </div>
+        <div v-if="analyticsLoading" class="analytics-loading">Calculating workspace usage…</div>
+        <template v-else-if="analytics">
+          <div class="kpi-grid">
+            <article><span>Total calls</span><strong>{{ analytics.summary.calls.toLocaleString() }}</strong><small>Playground + API</small></article>
+            <article><span>Success rate</span><strong>{{ analytics.summary.calls ? Math.round(analytics.summary.successes / analytics.summary.calls * 100) : 0 }}%</strong><small>{{ analytics.summary.failures }} failed</small></article>
+            <article><span>Median latency</span><strong>{{ Math.round(analytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(analytics.summary.p95LatencyMs) }} ms</small></article>
+            <article><span>Classifiers</span><strong>{{ auth.quota.classifiers.used }}<small> / {{ auth.quota.classifiers.limit }}</small></strong><small>Active on Free</small></article>
+          </div>
+          <div class="analytics-grid">
+            <article class="usage-chart">
+              <div class="analytics-title"><div><span>Calls over time</span><h2>Daily activity</h2></div><small>{{ analytics.range.from.slice(0, 10) }} → {{ analytics.range.to.slice(0, 10) }}</small></div>
+              <div v-if="analytics.timeline.length" class="bar-chart">
+                <div v-for="item in analytics.timeline" :key="item.date"><span :style="{ height: `${Math.max(4, item.calls / maxTimelineCalls * 100)}%` }"><b>{{ item.calls }}</b></span><small>{{ new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</small></div>
+              </div>
+              <div v-else class="analytics-empty">Calls will appear here as you test and use deployed classifiers.</div>
+            </article>
+            <article class="classifier-usage">
+              <div class="analytics-title"><div><span>Breakdown</span><h2>By classifier</h2></div></div>
+              <div v-for="item in analytics.byClassifier" :key="item.classifierId" class="usage-row"><div><b>{{ item.name }}</b><small>{{ item.successes }} successful · {{ Math.round(item.averageLatencyMs) }} ms avg</small></div><strong>{{ item.calls }}</strong></div>
+              <div v-if="!analytics.byClassifier.length" class="analytics-empty">No classifier activity yet.</div>
+            </article>
+          </div>
+        </template>
       </section>
     </main>
 

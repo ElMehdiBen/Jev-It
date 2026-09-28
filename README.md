@@ -2,7 +2,7 @@
 
 **Jev-It Studio for building classifiers at the speed of conversation.**
 
-Jev-It is a single-user workspace for building, testing, versioning, and deploying reusable TypeSafe AI JEV classifiers.
+Jev-It is a workspace for building, testing, versioning, and deploying reusable TypeSafe AI JEV classifiers.
 
 ## What it does
 
@@ -16,6 +16,9 @@ Jev-It is a single-user workspace for building, testing, versioning, and deployi
 - Exports the exact deployed request structure for direct TypeSafe/JEV API calls.
 - Shows both readable classifier answers and the complete raw JEV response.
 - Generates rotatable `jv_live_...` project keys and stores only SHA-256 hashes.
+- Authenticates users with Google SSO and isolates every resource by workspace.
+- Enforces Free plan classifier and monthly JEV-call quotas.
+- Tracks privacy-conscious usage analytics without storing input states or model responses.
 
 ## Setup
 
@@ -35,10 +38,27 @@ OPENAI_MODEL=gpt-6-luna
 TYPESAFE_API_KEY=...
 TYPESAFE_MODEL=jev-latest
 
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
+PLATFORM_ADMIN_EMAILS=you@example.com
+
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DATABASE=jev_studio
 PORT=3001
 ```
+
+Create a Google OAuth **Web application** client and register the exact redirect URI shown above. Jev-It requests only `openid`, `email`, and `profile`; it stores its own hashed, expiring browser sessions and does not retain Google access or refresh tokens.
+
+On first sign-in, Jev-It creates a personal Free workspace. Existing unowned data from an earlier single-user installation is claimed by the first workspace so local classifiers are preserved.
+
+## Free plan
+
+- 5 active classifiers per workspace.
+- 1,000 JEV executions per UTC calendar month.
+- Playground tests and production API calls both count toward usage.
+- Validated requests reserve quota before contacting JEV; requests rejected before that point do not consume quota.
+- Raw API-call analytics are retained for 90 days, while daily aggregates are retained indefinitely.
 
 ## Docker development (recommended)
 
@@ -48,7 +68,7 @@ The development stack runs the Vue frontend, Express API, and MongoDB with persi
 npm run docker:dev
 ```
 
-Open `http://127.0.0.1:5173`. Source files are bind-mounted into the app container. Vite uses polling so updates are detected reliably across Linux, macOS, and Docker Desktop. Express uses Node's watch mode and reloads when `server.js` changes.
+Open `http://localhost:5173`. Source files are bind-mounted into the app container. Vite uses polling so updates are detected reliably across Linux, macOS, and Docker Desktop. Express uses Node's watch mode and reloads when `server.js` changes.
 
 Useful commands:
 
@@ -69,7 +89,7 @@ If MongoDB is already installed on your machine, run:
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+Open `http://localhost:5173`.
 
 ## Calling a deployed classifier
 
