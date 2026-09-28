@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import OpenAI from 'openai'
 import { MongoClient } from 'mongodb'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify as verifySignature } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -13,24 +13,63 @@ const host = process.env.HOST || '127.0.0.1'
 const jevUrl = 'https://api.typesafe.ai/v1/systemone'
 const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017'
 const databaseName = process.env.MONGODB_DATABASE || 'jev_studio'
+const googleClientId = process.env.GOOGLE_CLIENT_ID || ''
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || ''
+const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}/api/auth/google/callback`
+const sessionDays = 30
+const freeQuotas = { maxClassifiers: 5, monthlyApiCalls: 1000 }
+const analyticsRetentionSeconds = 90 * 24 * 60 * 60
+const platformAdminEmails = new Set(String(process.env.PLATFORM_ADMIN_EMAILS || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean))
+const googleAuthorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth'
+const googleTokenEndpoint = 'https://oauth2.googleapis.com/token'
+const googleJwksEndpoint = 'https://www.googleapis.com/oauth2/v3/certs'
+let googleJwks = { expiresAt: 0, keys: [] }
 
 app.disable('x-powered-by')
 app.use(express.json({ limit: '2mb' }))
 
 let mongoClient
 let database
+let databasePromise
 
 async function getDb() {
   if (database) return database
-  mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 2500 })
-  await mongoClient.connect()
-  database = mongoClient.db(databaseName)
-  await Promise.all([
-    database.collection('classifiers').createIndex({ id: 1 }, { unique: true }),
-    database.collection('builder_sessions').createIndex({ id: 1 }, { unique: true }),
-    database.collection('api_keys').createIndex({ keyHash: 1 }, { unique: true }),
-  ])
-  return database
+  if (!databasePromise) databasePromise = (async () => {
+    mongoClient = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 2500 })
+    await mongoClient.connect()
+    const db = mongoClient.db(databaseName)
+    if (!await db.listCollections({ name: 'api_call_events' }).hasNext()) {
+      await db.createCollection('api_call_events', {
+        timeseries: { timeField: 'timestamp', metaField: 'workspaceId', granularity: 'minutes' },
+        expireAfterSeconds: analyticsRetentionSeconds,
+      })
+    }
+    await Promise.all([
+      db.collection('users').createIndex({ googleSub: 1 }, { unique: true }),
+      db.collection('workspaces').createIndex({ id: 1 }, { unique: true }),
+      db.collection('workspace_memberships').createIndex({ userId: 1, workspaceId: 1 }, { unique: true }),
+      db.collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
+      db.collection('sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+      db.collection('oauth_states').createIndex({ stateHash: 1 }, { unique: true }),
+      db.collection('oauth_states').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+      db.collection('classifiers').createIndex({ id: 1 }, { unique: true }),
+      db.collection('classifiers').createIndex({ workspaceId: 1, updatedAt: -1 }),
+      db.collection('builder_sessions').createIndex({ id: 1 }, { unique: true }),
+      db.collection('builder_sessions').createIndex({ workspaceId: 1, updatedAt: -1 }),
+      db.collection('api_keys').createIndex({ keyHash: 1 }, { unique: true }),
+      db.collection('api_keys').createIndex({ workspaceId: 1, revokedAt: 1 }),
+      db.collection('usage_counters').createIndex({ workspaceId: 1, period: 1, metric: 1 }, { unique: true }),
+      db.collection('usage_rollups').createIndex({ workspaceId: 1, day: 1, classifierId: 1, source: 1 }, { unique: true }),
+      db.collection('api_call_events').createIndex({ workspaceId: 1, timestamp: -1 }),
+      db.collection('api_call_events').createIndex({ workspaceId: 1, classifierId: 1, timestamp: -1 }),
+    ])
+    database = db
+    return db
+  })().catch((error) => {
+    databasePromise = null
+    throw error
+  })
+  return databasePromise
 }
 
 function id(prefix) {
@@ -56,11 +95,190 @@ function handleRoute(handler) {
       const isMongo = error?.name?.includes('Mongo') || error?.message?.includes('ECONNREFUSED')
       response.status(error.status || (isMongo ? 503 : 500)).json({
         error: isMongo ? 'MongoDB is not available.' : error.message || 'Something went wrong.',
+        code: error.code,
+        limit: error.limit,
+        used: error.used,
+        resetsAt: error.resetsAt,
         detail: isMongo ? 'Start MongoDB and verify MONGODB_URI in .env.' : undefined,
         upstream: error.data,
       })
     }
   }
+}
+
+function parseCookies(request) {
+  return Object.fromEntries(String(request.headers.cookie || '').split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter(([key]) => key))
+}
+
+function sessionCookie(value, maxAge = sessionDays * 24 * 60 * 60) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  return `jev_session=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
+}
+
+function oauthCookie(value, maxAge = 600) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  return `jev_oauth_state=${encodeURIComponent(value)}; Path=/api/auth/google/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
+}
+
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left || ''))
+  const b = Buffer.from(String(right || ''))
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+function decodeJwtSegment(value) {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+}
+
+async function getGoogleSigningKeys() {
+  if (googleJwks.expiresAt > Date.now()) return googleJwks.keys
+  const response = await fetch(googleJwksEndpoint, { signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw new Error('Could not retrieve Google signing keys.')
+  const body = await response.json()
+  const maxAge = Number(response.headers.get('cache-control')?.match(/max-age=(\d+)/)?.[1] || 3600)
+  googleJwks = { keys: body.keys || [], expiresAt: Date.now() + maxAge * 1000 }
+  return googleJwks.keys
+}
+
+async function verifyGoogleIdToken(idToken, expectedNonce) {
+  const parts = String(idToken).split('.')
+  if (parts.length !== 3) throw new Error('Google returned an invalid identity token.')
+  const [encodedHeader, encodedPayload, encodedSignature] = parts
+  const header = decodeJwtSegment(encodedHeader)
+  const payload = decodeJwtSegment(encodedPayload)
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('Google returned an unsupported identity token.')
+  const jwk = (await getGoogleSigningKeys()).find((key) => key.kid === header.kid)
+  if (!jwk) throw new Error('Google identity signing key was not found.')
+  const validSignature = verifySignature('RSA-SHA256', Buffer.from(`${encodedHeader}.${encodedPayload}`), createPublicKey({ key: jwk, format: 'jwk' }), Buffer.from(encodedSignature, 'base64url'))
+  const now = Math.floor(Date.now() / 1000)
+  const validAudience = Array.isArray(payload.aud) ? payload.aud.includes(googleClientId) : payload.aud === googleClientId
+  if (!validSignature || !['https://accounts.google.com', 'accounts.google.com'].includes(payload.iss) || !validAudience || payload.exp <= now || payload.iat > now + 60 || !safeEqual(payload.nonce, expectedNonce)) {
+    throw new Error('Google identity token validation failed.')
+  }
+  return payload
+}
+
+async function exchangeGoogleCode(code) {
+  const response = await fetch(googleTokenEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ code, client_id: googleClientId, client_secret: googleClientSecret, redirect_uri: googleRedirectUri, grant_type: 'authorization_code' }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body.id_token) throw new Error(body.error_description || 'Google sign-in could not be completed.')
+  return body.id_token
+}
+
+function workspaceName(profile) {
+  const firstName = String(profile.given_name || profile.name || profile.email?.split('@')[0] || 'My').trim().split(/\s+/)[0]
+  return `${firstName}'s Workspace`
+}
+
+async function ensurePersonalWorkspace(db, user, profile) {
+  const membership = await db.collection('workspace_memberships').findOne({ userId: user.id }, { sort: { createdAt: 1 } })
+  if (membership) return db.collection('workspaces').findOne({ id: membership.workspaceId })
+  const now = new Date()
+  const workspace = {
+    id: id('ws'),
+    name: workspaceName(profile),
+    type: 'personal',
+    plan: 'free',
+    quotas: { ...freeQuotas },
+    usage: { activeClassifiers: 0 },
+    createdBy: user.id,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await db.collection('workspaces').insertOne(workspace)
+  await db.collection('workspace_memberships').insertOne({ id: id('mem'), workspaceId: workspace.id, userId: user.id, role: 'owner', createdAt: now })
+
+  const legacyClaim = await db.collection('system_settings').updateOne(
+    { _id: 'legacy_workspace_claim' },
+    { $setOnInsert: { workspaceId: workspace.id, claimedAt: now } },
+    { upsert: true },
+  )
+  if (legacyClaim.upsertedCount) {
+    await Promise.all([
+      db.collection('classifiers').updateMany({ workspaceId: { $exists: false } }, { $set: { workspaceId: workspace.id, createdBy: user.id } }),
+      db.collection('builder_sessions').updateMany({ workspaceId: { $exists: false } }, { $set: { workspaceId: workspace.id, userId: user.id } }),
+      db.collection('api_keys').updateMany({ workspaceId: { $exists: false } }, { $set: { workspaceId: workspace.id, createdBy: user.id } }),
+    ])
+    const activeClassifiers = await db.collection('classifiers').countDocuments({ workspaceId: workspace.id, archivedAt: null })
+    await db.collection('workspaces').updateOne({ id: workspace.id }, { $set: { 'usage.activeClassifiers': activeClassifiers } })
+    workspace.usage.activeClassifiers = activeClassifiers
+  }
+  return workspace
+}
+
+async function requireSession(request, response, next) {
+  try {
+    const token = parseCookies(request).jev_session
+    if (!token) return response.status(401).json({ error: 'Sign in to continue.', code: 'authentication_required' })
+    const db = await getDb()
+    const session = await db.collection('sessions').findOne({ tokenHash: hashKey(token), expiresAt: { $gt: new Date() } })
+    if (!session) return response.status(401).json({ error: 'Your session has expired.', code: 'authentication_required' })
+    const [user, workspace, membership] = await Promise.all([
+      db.collection('users').findOne({ id: session.userId }),
+      db.collection('workspaces').findOne({ id: session.workspaceId }),
+      db.collection('workspace_memberships').findOne({ userId: session.userId, workspaceId: session.workspaceId }),
+    ])
+    if (!user || !workspace || !membership) return response.status(401).json({ error: 'Your workspace session is no longer valid.', code: 'authentication_required' })
+    request.auth = { session, user, workspace, membership }
+    request.workspaceId = workspace.id
+    next()
+  } catch (error) {
+    next(error)
+  }
+}
+
+function currentPeriod(date = new Date()) {
+  return date.toISOString().slice(0, 7)
+}
+
+function nextPeriodStart(date = new Date()) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))
+}
+
+async function reserveJevExecution(db, workspace) {
+  const period = currentPeriod()
+  const key = { workspaceId: workspace.id, period, metric: 'jev_executions' }
+  const limit = workspace.quotas?.monthlyApiCalls ?? freeQuotas.monthlyApiCalls
+  await db.collection('usage_counters').updateOne(key, { $setOnInsert: { used: 0, createdAt: new Date() }, $set: { limit, updatedAt: new Date() } }, { upsert: true })
+  const counter = await db.collection('usage_counters').findOneAndUpdate(
+    { ...key, used: { $lt: limit } },
+    { $inc: { used: 1 }, $set: { updatedAt: new Date(), limit } },
+    { returnDocument: 'after' },
+  )
+  if (!counter) {
+    const current = await db.collection('usage_counters').findOne(key)
+    const error = new Error('Monthly API quota exceeded.')
+    Object.assign(error, { status: 429, code: 'quota_exceeded', limit, used: current?.used || limit, resetsAt: nextPeriodStart() })
+    throw error
+  }
+  return counter
+}
+
+async function recordApiCall(db, event) {
+  const timestamp = event.timestamp || new Date()
+  const day = timestamp.toISOString().slice(0, 10)
+  await Promise.all([
+    db.collection('api_call_events').insertOne({ ...event, timestamp }),
+    db.collection('usage_rollups').updateOne(
+      { workspaceId: event.workspaceId, day, classifierId: event.classifierId, source: event.source },
+      {
+        $inc: {
+          calls: 1,
+          successes: event.status === 'success' ? 1 : 0,
+          failures: event.status === 'success' ? 0 : 1,
+          totalLatencyMs: event.latencyMs || 0,
+        },
+        $set: { updatedAt: new Date() },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true },
+    ),
+  ])
 }
 
 const builderSchema = {
@@ -226,6 +444,70 @@ async function callJev(state, questions) {
   return data
 }
 
+app.get('/api/auth/google', handleRoute(async (_request, response) => {
+  if (!googleClientId || !googleClientSecret) return response.status(503).json({ error: 'Google SSO is not configured.' })
+  const db = await getDb()
+  const state = randomBytes(32).toString('base64url')
+  const nonce = randomBytes(32).toString('base64url')
+  await db.collection('oauth_states').insertOne({ stateHash: hashKey(state), nonce, expiresAt: new Date(Date.now() + 10 * 60 * 1000), createdAt: new Date() })
+  response.setHeader('Set-Cookie', oauthCookie(state))
+  const authorizationUrl = new URL(googleAuthorizationEndpoint)
+  authorizationUrl.search = new URLSearchParams({ client_id: googleClientId, redirect_uri: googleRedirectUri, response_type: 'code', scope: 'openid email profile', state, nonce, prompt: 'select_account' })
+  response.redirect(authorizationUrl.toString())
+}))
+
+app.get('/api/auth/google/callback', handleRoute(async (request, response) => {
+  const state = String(request.query.state || '')
+  const code = String(request.query.code || '')
+  const cookieState = parseCookies(request).jev_oauth_state
+  if (!code || !state || !cookieState || !safeEqual(state, cookieState)) return response.status(400).send('Invalid Google sign-in state.')
+  const db = await getDb()
+  const stateRecord = await db.collection('oauth_states').findOneAndDelete({ stateHash: hashKey(state), expiresAt: { $gt: new Date() } })
+  if (!stateRecord) return response.status(400).send('This Google sign-in request has expired.')
+  const idToken = await exchangeGoogleCode(code)
+  const profile = await verifyGoogleIdToken(idToken, stateRecord.nonce)
+  if (!profile?.sub || !profile.email || !profile.email_verified) return response.status(401).send('A verified Google account is required.')
+  const now = new Date()
+  const user = await db.collection('users').findOneAndUpdate(
+    { googleSub: profile.sub },
+    {
+      $set: { email: profile.email.toLowerCase(), name: profile.name || profile.email, picture: profile.picture || null, lastLoginAt: now, updatedAt: now },
+      $setOnInsert: { id: id('usr'), googleSub: profile.sub, createdAt: now },
+    },
+    { upsert: true, returnDocument: 'after' },
+  )
+  const workspace = await ensurePersonalWorkspace(db, user, profile)
+  const rawToken = randomBytes(32).toString('base64url')
+  await db.collection('sessions').insertOne({
+    id: id('ses'), tokenHash: hashKey(rawToken), userId: user.id, workspaceId: workspace.id,
+    createdAt: now, lastSeenAt: now, expiresAt: new Date(now.getTime() + sessionDays * 24 * 60 * 60 * 1000),
+  })
+  response.setHeader('Set-Cookie', [sessionCookie(rawToken), oauthCookie('', 0)])
+  response.redirect('/')
+}))
+
+app.get('/api/auth/session', requireSession, handleRoute(async (request, response) => {
+  const db = await getDb()
+  const counter = await db.collection('usage_counters').findOne({ workspaceId: request.workspaceId, period: currentPeriod(), metric: 'jev_executions' })
+  const { user, workspace, membership } = request.auth
+  response.json({
+    authenticated: true,
+    user: { id: user.id, email: user.email, name: user.name, picture: user.picture, isPlatformAdmin: platformAdminEmails.has(user.email) },
+    workspace: { id: workspace.id, name: workspace.name, plan: workspace.plan, role: membership.role },
+    quota: {
+      classifiers: { used: workspace.usage?.activeClassifiers || 0, limit: workspace.quotas?.maxClassifiers ?? freeQuotas.maxClassifiers },
+      apiCalls: { used: counter?.used || 0, limit: workspace.quotas?.monthlyApiCalls ?? freeQuotas.monthlyApiCalls, period: currentPeriod(), resetsAt: nextPeriodStart() },
+    },
+  })
+}))
+
+app.post('/api/auth/logout', requireSession, handleRoute(async (request, response) => {
+  const db = await getDb()
+  await db.collection('sessions').deleteOne({ id: request.auth.session.id })
+  response.setHeader('Set-Cookie', sessionCookie('', 0))
+  response.status(204).end()
+}))
+
 app.get('/api/health', handleRoute(async (_request, response) => {
   let mongo = false
   try { await getDb(); mongo = true } catch {}
@@ -233,28 +515,37 @@ app.get('/api/health', handleRoute(async (_request, response) => {
     mongo,
     openai: Boolean(process.env.OPENAI_API_KEY),
     typesafe: Boolean(process.env.TYPESAFE_API_KEY),
+    authConfigured: Boolean(googleClientId && googleClientSecret),
     model: process.env.OPENAI_MODEL || 'gpt-6-luna',
   })
 }))
 
-app.get('/api/classifiers', handleRoute(async (_request, response) => {
+app.use('/api/classifiers', requireSession)
+app.use('/api/builder', requireSession)
+app.use('/api/keys', requireSession)
+app.use('/api/analytics', requireSession)
+app.use('/api/admin', requireSession)
+
+app.get('/api/classifiers', handleRoute(async (request, response) => {
   const db = await getDb()
-  const items = await db.collection('classifiers').find({}, { projection: { _id: 0, deployments: 0 } }).sort({ updatedAt: -1 }).toArray()
+  const items = await db.collection('classifiers').find({ workspaceId: request.workspaceId, archivedAt: null }, { projection: { _id: 0, deployments: 0 } }).sort({ updatedAt: -1 }).toArray()
   response.json({ items })
 }))
 
 app.get('/api/classifiers/:id', handleRoute(async (request, response) => {
   const db = await getDb()
-  const classifier = cleanDocument(await db.collection('classifiers').findOne({ id: request.params.id }))
+  const classifier = cleanDocument(await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId }))
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   response.json(classifier)
 }))
 
-app.post('/api/builder/sessions', handleRoute(async (_request, response) => {
+app.post('/api/builder/sessions', handleRoute(async (request, response) => {
   const db = await getDb()
   const now = new Date()
   const session = {
     id: id('build'),
+    workspaceId: request.workspaceId,
+    userId: request.auth.user.id,
     messages: [{ role: 'assistant', content: 'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.', createdAt: now }],
     draft: { name: 'New classifier', description: '', questions: {}, ready: false },
     createdAt: now,
@@ -266,7 +557,7 @@ app.post('/api/builder/sessions', handleRoute(async (_request, response) => {
 
 app.get('/api/builder/sessions/:id', handleRoute(async (request, response) => {
   const db = await getDb()
-  const session = cleanDocument(await db.collection('builder_sessions').findOne({ id: request.params.id }))
+  const session = cleanDocument(await db.collection('builder_sessions').findOne({ id: request.params.id, workspaceId: request.workspaceId }))
   if (!session) return response.status(404).json({ error: 'Builder session not found.' })
   response.json(session)
 }))
@@ -278,7 +569,7 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
 
   const db = await getDb()
   const collection = db.collection('builder_sessions')
-  const session = await collection.findOne({ id: request.params.id })
+  const session = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
   if (!session) return response.status(404).json({ error: 'Builder session not found.' })
 
   const userMessage = { role: 'user', content, createdAt: new Date() }
@@ -302,7 +593,7 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
   const draft = normalizeDraft(result)
   const assistantMessage = { role: 'assistant', content: result.assistant_message, createdAt: new Date() }
   await collection.updateOne(
-    { id: session.id },
+    { id: session.id, workspaceId: request.workspaceId },
     { $set: { draft, updatedAt: new Date() }, $push: { messages: { $each: [userMessage, assistantMessage] } } },
   )
   response.json({ message: assistantMessage, draft, ready: draft.ready })
@@ -310,25 +601,39 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
 
 app.post('/api/builder/sessions/:id/create', handleRoute(async (request, response) => {
   const db = await getDb()
-  const session = await db.collection('builder_sessions').findOne({ id: request.params.id })
+  const session = await db.collection('builder_sessions').findOne({ id: request.params.id, workspaceId: request.workspaceId })
   if (!session) return response.status(404).json({ error: 'Builder session not found.' })
   if (!session.draft?.ready || !Object.keys(session.draft.questions || {}).length) return response.status(400).json({ error: 'The classifier draft is not ready yet.' })
   const validationError = validateQuestions(session.draft.questions)
   if (validationError) return response.status(400).json({ error: validationError })
+  const workspace = await db.collection('workspaces').findOneAndUpdate(
+    { id: request.workspaceId, 'usage.activeClassifiers': { $lt: request.auth.workspace.quotas?.maxClassifiers ?? freeQuotas.maxClassifiers } },
+    { $inc: { 'usage.activeClassifiers': 1 }, $set: { updatedAt: new Date() } },
+    { returnDocument: 'after' },
+  )
+  if (!workspace) return response.status(403).json({ error: 'Free plan classifier limit reached.', code: 'classifier_quota_exceeded' })
   const now = new Date()
   const classifier = {
     id: id('cls'),
+    workspaceId: request.workspaceId,
+    createdBy: request.auth.user.id,
     name: session.draft.name,
     description: session.draft.description,
     questions: session.draft.questions,
     deployedVersion: null,
     deployments: [],
     deploymentEvents: [],
+    archivedAt: null,
     createdAt: now,
     updatedAt: now,
   }
-  await db.collection('classifiers').insertOne(classifier)
-  await db.collection('builder_sessions').updateOne({ id: session.id }, { $set: { classifierId: classifier.id, updatedAt: now } })
+  try {
+    await db.collection('classifiers').insertOne(classifier)
+  } catch (error) {
+    await db.collection('workspaces').updateOne({ id: request.workspaceId }, { $inc: { 'usage.activeClassifiers': -1 } })
+    throw error
+  }
+  await db.collection('builder_sessions').updateOne({ id: session.id, workspaceId: request.workspaceId }, { $set: { classifierId: classifier.id, updatedAt: now } })
   response.status(201).json(cleanDocument(classifier))
 }))
 
@@ -339,7 +644,7 @@ app.put('/api/classifiers/:id', handleRoute(async (request, response) => {
   if (validationError) return response.status(400).json({ error: validationError })
   const db = await getDb()
   const result = await db.collection('classifiers').findOneAndUpdate(
-    { id: request.params.id },
+    { id: request.params.id, workspaceId: request.workspaceId },
     { $set: { name: String(name).trim(), description: String(description || '').trim(), questions, updatedAt: new Date() } },
     { returnDocument: 'after' },
   )
@@ -352,26 +657,37 @@ app.post('/api/classifiers/:id/test', handleRoute(async (request, response) => {
   if (!states.length) return response.status(400).json({ error: 'Add at least one test state.' })
   if (states.length > 20) return response.status(400).json({ error: 'A test run supports up to 20 states.' })
   const db = await getDb()
-  const classifier = await db.collection('classifiers').findOne({ id: request.params.id })
+  const classifier = await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId })
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   const validationError = validateQuestions(classifier.questions)
   if (validationError) return response.status(400).json({ error: validationError })
   const results = []
-  for (const state of states) results.push({ state, response: await callJev(state, classifier.questions) })
+  for (const state of states) {
+    await reserveJevExecution(db, request.auth.workspace)
+    const startedAt = Date.now()
+    try {
+      const jevResponse = await callJev(state, classifier.questions)
+      await recordApiCall(db, { workspaceId: request.workspaceId, classifierId: classifier.id, deploymentVersion: null, source: 'playground', status: 'success', httpStatus: 200, latencyMs: Date.now() - startedAt })
+      results.push({ state, response: jevResponse })
+    } catch (error) {
+      await recordApiCall(db, { workspaceId: request.workspaceId, classifierId: classifier.id, deploymentVersion: null, source: 'playground', status: 'error', httpStatus: error.status || 500, errorCode: error.code || 'jev_error', latencyMs: Date.now() - startedAt })
+      throw error
+    }
+  }
   response.json({ classifierId: classifier.id, ephemeral: true, results })
 }))
 
 app.post('/api/classifiers/:id/deploy', handleRoute(async (request, response) => {
   const db = await getDb()
   const collection = db.collection('classifiers')
-  const classifier = await collection.findOne({ id: request.params.id })
+  const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   const validationError = validateQuestions(classifier.questions)
   if (validationError) return response.status(400).json({ error: validationError })
   const version = Math.max(0, ...(classifier.deployments || []).map((item) => item.version)) + 1
   const snapshot = { version, name: classifier.name, description: classifier.description, questions: classifier.questions, deployedAt: new Date() }
   await collection.updateOne(
-    { id: classifier.id },
+    { id: classifier.id, workspaceId: request.workspaceId },
     { $set: { deployedVersion: version, updatedAt: new Date() }, $push: { deployments: snapshot, deploymentEvents: { version, action: 'deploy', createdAt: new Date() } } },
   )
   response.status(201).json(snapshot)
@@ -381,35 +697,102 @@ app.post('/api/classifiers/:id/activate/:version', handleRoute(async (request, r
   const version = Number(request.params.version)
   const db = await getDb()
   const collection = db.collection('classifiers')
-  const classifier = await collection.findOne({ id: request.params.id, 'deployments.version': version })
+  const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId, 'deployments.version': version })
   if (!classifier) return response.status(404).json({ error: 'Deployment version not found.' })
   await collection.updateOne(
-    { id: classifier.id },
+    { id: classifier.id, workspaceId: request.workspaceId },
     { $set: { deployedVersion: version, updatedAt: new Date() }, $push: { deploymentEvents: { version, action: 'activate', createdAt: new Date() } } },
   )
   response.json({ deployedVersion: version })
 }))
 
-app.get('/api/keys', handleRoute(async (_request, response) => {
+app.get('/api/keys', handleRoute(async (request, response) => {
   const db = await getDb()
-  const key = await db.collection('api_keys').findOne({ revokedAt: null }, { sort: { createdAt: -1 } })
+  const key = await db.collection('api_keys').findOne({ workspaceId: request.workspaceId, revokedAt: null }, { sort: { createdAt: -1 } })
   response.json({ active: Boolean(key), prefix: key?.prefix || null, createdAt: key?.createdAt || null })
 }))
 
-app.post('/api/keys/rotate', handleRoute(async (_request, response) => {
+app.post('/api/keys/rotate', handleRoute(async (request, response) => {
   const db = await getDb()
   const collection = db.collection('api_keys')
-  await collection.updateMany({ revokedAt: null }, { $set: { revokedAt: new Date() } })
+  await collection.updateMany({ workspaceId: request.workspaceId, revokedAt: null }, { $set: { revokedAt: new Date() } })
   const secret = `jv_live_${randomBytes(24).toString('base64url')}`
-  const record = { id: id('key'), keyHash: hashKey(secret), prefix: `${secret.slice(0, 14)}…`, createdAt: new Date(), revokedAt: null }
+  const record = { id: id('key'), workspaceId: request.workspaceId, createdBy: request.auth.user.id, keyHash: hashKey(secret), prefix: `${secret.slice(0, 14)}…`, createdAt: new Date(), revokedAt: null }
   await collection.insertOne(record)
   response.status(201).json({ key: secret, prefix: record.prefix, createdAt: record.createdAt, shownOnce: true })
 }))
 
-app.delete('/api/keys/current', handleRoute(async (_request, response) => {
+app.delete('/api/keys/current', handleRoute(async (request, response) => {
   const db = await getDb()
-  await db.collection('api_keys').updateMany({ revokedAt: null }, { $set: { revokedAt: new Date() } })
+  await db.collection('api_keys').updateMany({ workspaceId: request.workspaceId, revokedAt: null }, { $set: { revokedAt: new Date() } })
   response.status(204).end()
+}))
+
+function analyticsRange(query) {
+  const now = new Date()
+  const earliest = new Date(now.getTime() - analyticsRetentionSeconds * 1000)
+  const requestedFrom = query.from ? new Date(String(query.from)) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const requestedTo = query.to ? new Date(String(query.to)) : now
+  return {
+    from: Number.isNaN(requestedFrom.getTime()) || requestedFrom < earliest ? earliest : requestedFrom,
+    to: Number.isNaN(requestedTo.getTime()) || requestedTo > now ? now : requestedTo,
+  }
+}
+
+app.get('/api/analytics', handleRoute(async (request, response) => {
+  const db = await getDb()
+  const { from, to } = analyticsRange(request.query)
+  const match = { workspaceId: request.workspaceId, timestamp: { $gte: from, $lte: to } }
+  if (request.query.classifierId) match.classifierId = String(request.query.classifierId)
+  const [analytics] = await db.collection('api_call_events').aggregate([
+    { $match: match },
+    { $facet: {
+      summary: [{ $group: {
+        _id: null,
+        calls: { $sum: 1 },
+        successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } },
+        failures: { $sum: { $cond: [{ $eq: ['$status', 'error'] }, 1, 0] } },
+        quotaDenied: { $sum: { $cond: [{ $eq: ['$status', 'quota_denied'] }, 1, 0] } },
+        averageLatencyMs: { $avg: '$latencyMs' },
+        latencyPercentiles: { $percentile: { input: '$latencyMs', p: [0.5, 0.95], method: 'approximate' } },
+      } }],
+      timeline: [
+        { $group: { _id: { $dateTrunc: { date: '$timestamp', unit: 'day' } }, calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } } } },
+        { $sort: { _id: 1 } },
+      ],
+      byClassifier: [
+        { $group: { _id: '$classifierId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
+        { $sort: { calls: -1 } },
+      ],
+      bySource: [{ $group: { _id: '$source', calls: { $sum: 1 } } }, { $sort: { calls: -1 } }],
+    } },
+  ]).toArray()
+  const classifiers = await db.collection('classifiers').find({ workspaceId: request.workspaceId }, { projection: { _id: 0, id: 1, name: 1 } }).toArray()
+  const names = Object.fromEntries(classifiers.map((classifier) => [classifier.id, classifier.name]))
+  const summary = analytics.summary[0] || { calls: 0, successes: 0, failures: 0, quotaDenied: 0, averageLatencyMs: 0, latencyPercentiles: [0, 0] }
+  const counter = await db.collection('usage_counters').findOne({ workspaceId: request.workspaceId, period: currentPeriod(), metric: 'jev_executions' })
+  response.json({
+    range: { from, to },
+    summary: { ...summary, p50LatencyMs: summary.latencyPercentiles?.[0] || 0, p95LatencyMs: summary.latencyPercentiles?.[1] || 0, latencyPercentiles: undefined },
+    timeline: analytics.timeline.map((item) => ({ date: item._id, calls: item.calls, successes: item.successes, failures: item.failures })),
+    byClassifier: analytics.byClassifier.map((item) => ({ classifierId: item._id, name: names[item._id] || 'Deleted classifier', calls: item.calls, successes: item.successes, averageLatencyMs: item.averageLatencyMs })),
+    bySource: analytics.bySource.map((item) => ({ source: item._id, calls: item.calls })),
+    quota: { used: counter?.used || 0, limit: request.auth.workspace.quotas?.monthlyApiCalls ?? freeQuotas.monthlyApiCalls, period: currentPeriod(), resetsAt: nextPeriodStart() },
+  })
+}))
+
+app.get('/api/admin/analytics', handleRoute(async (request, response) => {
+  if (!platformAdminEmails.has(request.auth.user.email)) return response.status(403).json({ error: 'Platform administrator access is required.' })
+  const db = await getDb()
+  const { from, to } = analyticsRange(request.query)
+  const rows = await db.collection('api_call_events').aggregate([
+    { $match: { timestamp: { $gte: from, $lte: to } } },
+    { $group: { _id: '$workspaceId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
+    { $sort: { calls: -1 } },
+  ]).toArray()
+  const workspaces = await db.collection('workspaces').find({ id: { $in: rows.map((row) => row._id) } }, { projection: { _id: 0, id: 1, name: 1, plan: 1 } }).toArray()
+  const names = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace]))
+  response.json({ range: { from, to }, workspaces: rows.map((row) => ({ workspaceId: row._id, ...names[row._id], calls: row.calls, successes: row.successes, failures: row.failures, averageLatencyMs: row.averageLatencyMs })) })
 }))
 
 async function requireProjectKey(request, response, next) {
@@ -420,6 +803,8 @@ async function requireProjectKey(request, response, next) {
     const db = await getDb()
     const record = await db.collection('api_keys').findOne({ keyHash: hashKey(String(supplied)), revokedAt: null })
     if (!record) return response.status(401).json({ error: 'Invalid or revoked project API key.' })
+    request.apiKey = record
+    request.workspaceId = record.workspaceId
     next()
   } catch (error) {
     response.status(503).json({ error: 'Could not verify the project API key.', detail: error.message })
@@ -427,16 +812,29 @@ async function requireProjectKey(request, response, next) {
 }
 
 app.post('/api/classify', requireProjectKey, handleRoute(async (request, response) => {
+  const startedAt = Date.now()
+  const requestId = id('req')
   const classifierId = String(request.body?.classifier_id || '')
   const state = String(request.body?.state || '').trim()
   if (!classifierId || !state) return response.status(400).json({ error: 'classifier_id and state are required.' })
   const db = await getDb()
-  const classifier = await db.collection('classifiers').findOne({ id: classifierId })
+  const workspace = await db.collection('workspaces').findOne({ id: request.workspaceId })
+  if (!workspace) return response.status(401).json({ error: 'The API key workspace no longer exists.' })
+  const classifier = await db.collection('classifiers').findOne({ id: classifierId, workspaceId: request.workspaceId })
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   if (!classifier.deployedVersion) return response.status(409).json({ error: 'This classifier has not been deployed.' })
   const deployment = classifier.deployments.find((item) => item.version === classifier.deployedVersion)
   if (!deployment) return response.status(409).json({ error: 'The active deployment could not be resolved.' })
-  response.json(await callJev(state, deployment.questions))
+  try {
+    await reserveJevExecution(db, workspace)
+    const result = await callJev(state, deployment.questions)
+    await recordApiCall(db, { timestamp: new Date(), requestId, workspaceId: request.workspaceId, classifierId, deploymentVersion: deployment.version, apiKeyId: request.apiKey.id, source: 'api', status: 'success', httpStatus: 200, latencyMs: Date.now() - startedAt })
+    response.setHeader('X-Request-Id', requestId)
+    response.json(result)
+  } catch (error) {
+    await recordApiCall(db, { timestamp: new Date(), requestId, workspaceId: request.workspaceId, classifierId, deploymentVersion: deployment.version, apiKeyId: request.apiKey.id, source: 'api', status: error.code === 'quota_exceeded' ? 'quota_denied' : 'error', httpStatus: error.status || 500, errorCode: error.code || 'jev_error', latencyMs: Date.now() - startedAt }).catch((analyticsError) => console.error('Could not record API call event', analyticsError))
+    throw error
+  }
 }))
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
