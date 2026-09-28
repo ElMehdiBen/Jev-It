@@ -1,5 +1,14 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 const health = ref({ mongo: false, openai: false, typesafe: false, authConfigured: false, model: 'gpt-6-luna' })
 const booting = ref(true)
@@ -326,11 +335,13 @@ onMounted(async () => {
       <span class="overline">Your classifier workspace</span>
       <h1>Build decisions<br><em>through conversation.</em></h1>
       <p>Sign in to keep your classifiers, deployments, API keys, quotas, and usage analytics inside your own private workspace.</p>
-      <a v-if="health.mongo && health.authConfigured" class="google-button" href="/api/auth/google"><span>G</span> Continue with Google <b>→</b></a>
+      <Button v-if="health.mongo && health.authConfigured" as-child class="google-button">
+        <a href="/api/auth/google"><span>G</span> Continue with Google <b>→</b></a>
+      </Button>
       <div v-else class="auth-setup">
         <b>{{ !health.mongo ? 'MongoDB is not connected.' : 'Google SSO is not configured.' }}</b>
         <code v-if="!health.authConfigured">GOOGLE_CLIENT_ID=…<br>GOOGLE_CLIENT_SECRET=…</code>
-        <button type="button" @click="loadHealth().then(loadAuthSession)">Check configuration</button>
+        <Button type="button" @click="loadHealth().then(loadAuthSession)">Check configuration</Button>
       </div>
     </div>
     <div class="auth-foot"><span>5 classifiers on Free</span><span>1,000 monthly JEV calls</span><span>Private by workspace</span></div>
@@ -343,7 +354,7 @@ onMounted(async () => {
         <span>Jev-It <span>Studio</span></span>
       </a>
 
-      <button class="new-button" type="button" @click="newBuilder"><span>＋</span> New classifier</button>
+      <Button class="new-button" variant="outline" type="button" @click="newBuilder"><span>＋</span> New classifier</Button>
 
       <nav class="classifier-nav">
         <p>Your classifiers <span>{{ classifiers.length }}</span></p>
@@ -370,13 +381,20 @@ onMounted(async () => {
         </button>
         <div class="quota-mini" v-if="auth.quota">
           <div><span>Free plan</span><b>{{ auth.quota.apiCalls.used }} / {{ auth.quota.apiCalls.limit }} calls</b></div>
-          <i><b :style="{ width: `${Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)}%` }"></b></i>
+          <Progress class="quota-progress" :model-value="Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)" />
         </div>
         <div class="account-mini">
-          <img v-if="auth.user.picture" :src="auth.user.picture" alt="" referrerpolicy="no-referrer" />
-          <span v-else>{{ auth.user.name.slice(0, 1) }}</span>
+          <Avatar class="account-avatar">
+            <AvatarImage v-if="auth.user.picture" :src="auth.user.picture" referrer-policy="no-referrer" />
+            <AvatarFallback>{{ auth.user.name.slice(0, 1) }}</AvatarFallback>
+          </Avatar>
           <div><b>{{ auth.user.name }}</b><small>{{ auth.user.email }}</small></div>
-          <button type="button" title="Sign out" @click="logout">↗</button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger as-child><Button variant="ghost" size="icon-xs" type="button" aria-label="Sign out" @click="logout">↗</Button></TooltipTrigger>
+              <TooltipContent side="right">Sign out</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
         <div class="service-state">
           <span><i :class="{ on: health.mongo }"></i> MongoDB</span>
@@ -425,10 +443,10 @@ onMounted(async () => {
             </div>
 
             <form class="chat-composer" @submit.prevent="sendMessage">
-              <textarea v-model="chatInput" :disabled="sending || !health.openai" placeholder="Describe what the classifier should decide…" rows="2" @keydown.meta.enter.prevent="sendMessage" @keydown.ctrl.enter.prevent="sendMessage"></textarea>
+              <Textarea v-model="chatInput" :disabled="sending || !health.openai" placeholder="Describe what the classifier should decide…" rows="2" @keydown.meta.enter.prevent="sendMessage" @keydown.ctrl.enter.prevent="sendMessage" />
               <div>
                 <span>{{ health.openai ? `${health.model} · low reasoning` : 'Add OPENAI_API_KEY to .env' }}</span>
-                <button type="submit" :disabled="!chatInput.trim() || sending">{{ sending ? 'Thinking…' : 'Send' }} <b>↑</b></button>
+                <Button type="submit" :disabled="!chatInput.trim() || sending">{{ sending ? 'Thinking…' : 'Send' }} <b>↑</b></Button>
               </div>
             </form>
           </div>
@@ -436,7 +454,7 @@ onMounted(async () => {
           <aside class="live-draft">
             <div class="draft-header">
               <div><span class="live-pill"><i></i> Live draft</span><small>Updates as you chat</small></div>
-              <span class="question-count">{{ draftEntries.length }} Q</span>
+              <Badge class="question-count" variant="outline">{{ draftEntries.length }} Q</Badge>
             </div>
             <div class="draft-identity">
               <span>Classifier name</span>
@@ -445,7 +463,7 @@ onMounted(async () => {
             </div>
             <div class="draft-questions">
               <article v-for="([key, question], index) in draftEntries" :key="key">
-                <div><span>{{ String(index + 1).padStart(2, '0') }}</span><b class="question-type" :class="question.type">{{ question.type }}</b></div>
+                <div><span>{{ String(index + 1).padStart(2, '0') }}</span><Badge class="question-type" :class="question.type">{{ question.type }}</Badge></div>
                 <h3>{{ key.replaceAll('_', ' ') }}</h3>
                 <p>{{ question.instructions }}</p>
                 <div v-if="question.criteria" class="criteria-preview">
@@ -470,19 +488,21 @@ onMounted(async () => {
             <h1>{{ selected.name }}</h1>
             <p>{{ selected.description || 'No description yet.' }}</p>
           </div>
-          <button class="deploy-button" type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy draft' }} <span>↗</span></button>
+          <Button class="deploy-button" type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy draft' }} <span>↗</span></Button>
         </div>
 
-        <nav class="tabs">
-          <button v-for="tab in ['configure', 'test', 'deploy', 'api']" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button>
-        </nav>
+        <Tabs v-model="activeTab" class="classifier-tabs">
+          <TabsList class="tabs">
+            <TabsTrigger v-for="tab in ['configure', 'test', 'deploy', 'api']" :key="tab" :value="tab">{{ tab }}</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         <div v-if="activeTab === 'configure'" class="configure-layout">
           <div class="editor-main">
             <div class="form-section identity-editor">
               <div class="section-title"><span>01</span><div><h2>Identity</h2><p>The human-readable details for this classifier.</p></div></div>
-              <label>Name<input v-model="classifierDraft.name" /></label>
-              <label>Description<textarea v-model="classifierDraft.description" rows="3"></textarea></label>
+              <label>Name<Input v-model="classifierDraft.name" /></label>
+              <label>Description<Textarea v-model="classifierDraft.description" rows="3" /></label>
             </div>
 
             <div class="form-section">
@@ -490,16 +510,16 @@ onMounted(async () => {
               <article v-for="([key, question], index) in questionEntries" :key="key" class="question-editor">
                 <div class="question-editor-head">
                   <span>{{ String(index + 1).padStart(2, '0') }}</span>
-                  <input class="key-input" :value="key" @change="updateQuestionKey(key, $event)" />
+                  <Input class="key-input" :model-value="key" @change="updateQuestionKey(key, $event)" />
                   <select v-model="question.type" @change="changeQuestionType(question)"><option value="noul">Noul</option><option value="choice">Choice</option><option value="score">Score</option></select>
                   <button type="button" aria-label="Remove question" @click="removeQuestion(key)">×</button>
                 </div>
-                <label>Instructions<textarea v-model="question.instructions" rows="2"></textarea></label>
+                <label>Instructions<Textarea v-model="question.instructions" rows="2" /></label>
                 <div v-if="question.type === 'choice'" class="criteria-editor">
                   <span>Choice options</span>
                   <div v-for="(description, optionKey) in question.criteria" :key="optionKey">
-                    <input :value="optionKey" @change="renameChoice(question, optionKey, $event.target.value)" />
-                    <input v-model="question.criteria[optionKey]" />
+                    <Input :model-value="optionKey" @change="renameChoice(question, optionKey, $event.target.value)" />
+                    <Input v-model="question.criteria[optionKey]" />
                     <button type="button" @click="delete question.criteria[optionKey]">×</button>
                   </div>
                   <button type="button" @click="addChoice(question)">＋ Add option</button>
@@ -507,7 +527,7 @@ onMounted(async () => {
                 <div v-if="question.type === 'score'" class="criteria-editor">
                   <span>Ordered score levels</span>
                   <div v-for="(_, levelIndex) in question.criteria" :key="levelIndex">
-                    <b>{{ levelIndex }}</b><input v-model="question.criteria[levelIndex]" /><button type="button" @click="question.criteria.splice(levelIndex, 1)">×</button>
+                    <b>{{ levelIndex }}</b><Input v-model="question.criteria[levelIndex]" /><button type="button" @click="question.criteria.splice(levelIndex, 1)">×</button>
                   </div>
                   <button type="button" @click="question.criteria.push('New level')">＋ Add level</button>
                 </div>
@@ -527,8 +547,8 @@ onMounted(async () => {
           <div class="test-input-panel">
             <span class="overline">Ephemeral test bench</span><h2>Try real states.</h2>
             <p>Test one state, or separate multiple examples with a line containing <code>---</code>. Nothing is saved.</p>
-            <textarea v-model="testInput" placeholder="Paste a state for this classifier to evaluate…\n\n---\n\nAdd another state…"></textarea>
-            <button type="button" :disabled="!testInput.trim() || testing" @click="runTests">{{ testing ? 'Running JEV…' : 'Run test' }} <span>→</span></button>
+            <Textarea v-model="testInput" placeholder="Paste a state for this classifier to evaluate…\n\n---\n\nAdd another state…" />
+            <Button type="button" :disabled="!testInput.trim() || testing" @click="runTests">{{ testing ? 'Running JEV…' : 'Run test' }} <span>→</span></Button>
           </div>
           <div class="test-results">
             <div v-if="!testResults.length" class="test-empty"><span>⌁</span><h3>No results yet</h3><p>Run the draft against real examples before deploying it.</p></div>
@@ -536,18 +556,22 @@ onMounted(async () => {
               <div class="result-state"><span>State {{ resultIndex + 1 }}</span><p>{{ result.state }}</p></div>
               <div class="answer-list">
                 <div v-for="(answer, key) in result.response.answers" :key="key">
-                  <span class="question-type" :class="answer.type">{{ answer.type }}</span>
+                  <Badge class="question-type" :class="answer.type">{{ answer.type }}</Badge>
                   <b>{{ key.replaceAll('_', ' ') }}</b><strong>{{ answerValue(answer) }}</strong>
                   <small v-if="answer.confidence !== undefined">{{ Math.round(answer.confidence * 100) }}% confidence</small>
                 </div>
               </div>
-              <details class="raw-response">
-                <summary><span>Raw JEV response</span><small>Complete, unmodified JSON</small><b>⌄</b></summary>
-                <div class="raw-response-body">
-                  <button type="button" @click="copy(JSON.stringify(result.response, null, 2))">Copy JSON</button>
-                  <pre>{{ JSON.stringify(result.response, null, 2) }}</pre>
-                </div>
-              </details>
+              <Collapsible v-slot="{ open }" class="raw-response">
+                <CollapsibleTrigger class="raw-response-trigger">
+                  <span>Raw JEV response</span><small>Complete, unmodified JSON</small><b :class="{ open }">⌄</b>
+                </CollapsibleTrigger>
+                <CollapsibleContent class="raw-response-content">
+                  <div class="raw-response-body">
+                    <Button variant="outline" size="sm" type="button" @click="copy(JSON.stringify(result.response, null, 2))">Copy JSON</Button>
+                    <pre>{{ JSON.stringify(result.response, null, 2) }}</pre>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </article>
           </div>
         </div>
