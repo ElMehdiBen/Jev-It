@@ -1,6 +1,6 @@
-# Contributing to JEV-it
+# Contributing to Jev-It
 
-Thanks for helping improve JEV-it.
+Thanks for helping improve Jev-It.
 
 ## Development workflow
 

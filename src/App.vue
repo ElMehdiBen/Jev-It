@@ -275,7 +275,7 @@ onMounted(async () => {
     <aside class="sidebar">
       <a class="studio-brand" href="#" @click.prevent="newBuilder">
         <span class="brand-bars"><i></i><i></i><i></i></span>
-        <span>JEV<span>.</span>STUDIO</span>
+        <span>Jev-It <span>Studio</span></span>
       </a>
 
       <button class="new-button" type="button" @click="newBuilder"><span>＋</span> New classifier</button>
@@ -323,7 +323,7 @@ onMounted(async () => {
         <div v-if="!health.mongo" class="setup-screen">
           <span class="setup-number">01</span>
           <h1>Connect MongoDB<br><em>to begin.</em></h1>
-          <p>JEV Studio stores classifier drafts, conversations, deployments, and hashed API keys in MongoDB.</p>
+          <p>Jev-It Studio stores classifier drafts, conversations, deployments, and hashed API keys in MongoDB.</p>
           <code>MONGODB_URI=mongodb://127.0.0.1:27017</code>
           <button type="button" @click="loadHealth().then(newBuilder)">Check connection →</button>
         </div>
@@ -502,7 +502,7 @@ onMounted(async () => {
             <section class="api-example">
               <div class="api-example-title">
                 <span>01</span>
-                <div><h3>Through JEV Studio</h3><p>Send only the classifier ID and state. The backend resolves the active deployment.</p></div>
+                <div><h3>Through Jev-It Studio</h3><p>Send only the classifier ID and state. The backend resolves the active deployment.</p></div>
               </div>
               <div class="code-card">
                 <div><span>cURL</span><button type="button" @click="copy(platformCurl)">Copy request</button></div>

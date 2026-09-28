@@ -1,8 +1,8 @@
-# JEV-it
+# Jev-It
 
-**A JEV studio for building classifiers at the speed of conversation.**
+**Jev-It Studio for building classifiers at the speed of conversation.**
 
-JEV-it is a single-user workspace for building, testing, versioning, and deploying reusable TypeSafe AI JEV classifiers.
+Jev-It is a single-user workspace for building, testing, versioning, and deploying reusable TypeSafe AI JEV classifiers.
 
 ## What it does
 
@@ -102,4 +102,4 @@ Contributions are welcome. `main` is protected, so all changes must be proposed 
 
 ## License
 
-JEV-it is available under the [MIT License](LICENSE).
+Jev-It is available under the [MIT License](LICENSE).
