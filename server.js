@@ -98,7 +98,7 @@ const builderSchema = {
   additionalProperties: false,
 }
 
-const builderInstructions = `You are the JEV Classifier Architect inside JEV Studio. Have a concise, collaborative conversation that discovers the user's automation need and turns it into a production-quality JEV classifier.
+const builderInstructions = `You are the JEV Classifier Architect inside Jev-It Studio. Have a concise, collaborative conversation that discovers the user's automation need and turns it into a production-quality JEV classifier.
 
 JEV receives one state and evaluates independent typed questions in parallel. It supports exactly:
 - noul: a specific yes/no statement. No criteria.
@@ -446,7 +446,7 @@ if (existsSync(distDir)) {
   app.get('*path', (_request, response) => response.sendFile(join(distDir, 'index.html')))
 }
 
-const server = app.listen(port, host, () => console.log(`JEV Studio listening on http://${host}:${port}`))
+const server = app.listen(port, host, () => console.log(`Jev-It Studio listening on http://${host}:${port}`))
 
 async function shutdown() {
   server.close()
