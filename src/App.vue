@@ -25,6 +25,8 @@ const revealedKey = ref('')
 const toast = ref('')
 const chatLog = ref(null)
 const analytics = ref(null)
+const adminAnalytics = ref(null)
+const analyticsScope = ref('workspace')
 const analyticsLoading = ref(false)
 
 const questionEntries = computed(() => Object.entries(classifierDraft.value?.questions || {}))
@@ -44,7 +46,8 @@ const directJevCurl = computed(() => `curl -X POST https://api.typesafe.ai/v1/sy
   -H 'Authorization: Bearer YOUR_TYPESAFE_API_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '${directJevPayload.value}'`)
-const maxTimelineCalls = computed(() => Math.max(1, ...(analytics.value?.timeline || []).map((item) => item.calls)))
+const visibleAnalytics = computed(() => analyticsScope.value === 'platform' ? adminAnalytics.value : analytics.value)
+const maxTimelineCalls = computed(() => Math.max(1, ...(visibleAnalytics.value?.timeline || []).map((item) => item.calls)))
 const pageTitle = computed(() => currentView.value === 'builder' ? 'Classifier builder' : currentView.value === 'keys' ? 'API keys' : currentView.value === 'analytics' ? 'Usage analytics' : selected.value?.name)
 
 async function api(path, options = {}) {
@@ -86,10 +89,15 @@ async function logout() {
 async function openAnalytics() {
   currentView.value = 'analytics'
   selected.value = null
+  analyticsScope.value = 'workspace'
   analyticsLoading.value = true
   pageError.value = ''
   try {
-    analytics.value = await api('/api/analytics')
+    const requests = [api('/api/analytics')]
+    if (auth.value.user?.isPlatformAdmin) requests.push(api('/api/admin/analytics'))
+    const [workspaceUsage, platformUsage] = await Promise.all(requests)
+    analytics.value = workspaceUsage
+    adminAnalytics.value = platformUsage || null
     await loadAuthSession()
   } catch (error) { pageError.value = error.message }
   finally { analyticsLoading.value = false }
@@ -619,30 +627,47 @@ onMounted(async () => {
       </section>
 
       <section v-else class="analytics-view">
-        <div class="analytics-hero">
-          <div><span class="overline">Last 30 days</span><h1>Usage, at a glance.</h1><p>Every playground and production call, without storing states or model responses.</p></div>
-          <div class="quota-card" v-if="auth.quota"><span>September quota</span><strong>{{ auth.quota.apiCalls.used.toLocaleString() }} <small>/ {{ auth.quota.apiCalls.limit.toLocaleString() }}</small></strong><i><b :style="{ width: `${Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)}%` }"></b></i><p>Resets {{ formatDate(auth.quota.apiCalls.resetsAt) }}</p></div>
+        <div v-if="auth.user.isPlatformAdmin" class="analytics-scope">
+          <button type="button" :class="{ active: analyticsScope === 'workspace' }" @click="analyticsScope = 'workspace'">My workspace</button>
+          <button type="button" :class="{ active: analyticsScope === 'platform' }" @click="analyticsScope = 'platform'">Jev-It platform</button>
+          <span>Admin view</span>
         </div>
-        <div v-if="analyticsLoading" class="analytics-loading">Calculating workspace usage…</div>
-        <template v-else-if="analytics">
-          <div class="kpi-grid">
+        <div class="analytics-hero">
+          <div><span class="overline">Last 30 days · {{ analyticsScope }}</span><h1>{{ analyticsScope === 'platform' ? 'The whole platform.' : 'Usage, at a glance.' }}</h1><p>{{ analyticsScope === 'platform' ? 'Aggregate activity across every Jev-It workspace and classifier.' : 'Every playground and production call, without storing states or model responses.' }}</p></div>
+          <div class="quota-card" v-if="analyticsScope === 'workspace' && auth.quota"><span>Monthly quota</span><strong>{{ auth.quota.apiCalls.used.toLocaleString() }} <small>/ {{ auth.quota.apiCalls.limit.toLocaleString() }}</small></strong><i><b :style="{ width: `${Math.min(100, auth.quota.apiCalls.used / auth.quota.apiCalls.limit * 100)}%` }"></b></i><p>Resets {{ formatDate(auth.quota.apiCalls.resetsAt) }}</p></div>
+          <div class="quota-card platform-card" v-else-if="adminAnalytics"><span>Platform footprint</span><strong>{{ adminAnalytics.summary.workspaces }} <small>workspaces</small></strong><p>{{ adminAnalytics.summary.users }} registered {{ adminAnalytics.summary.users === 1 ? 'user' : 'users' }}</p></div>
+        </div>
+        <div v-if="analyticsLoading" class="analytics-loading">Calculating usage…</div>
+        <template v-else-if="visibleAnalytics">
+          <div v-if="analyticsScope === 'workspace'" class="kpi-grid">
             <article><span>Total calls</span><strong>{{ analytics.summary.calls.toLocaleString() }}</strong><small>Playground + API</small></article>
             <article><span>Success rate</span><strong>{{ analytics.summary.calls ? Math.round(analytics.summary.successes / analytics.summary.calls * 100) : 0 }}%</strong><small>{{ analytics.summary.failures }} failed</small></article>
             <article><span>Median latency</span><strong>{{ Math.round(analytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(analytics.summary.p95LatencyMs) }} ms</small></article>
             <article><span>Classifiers</span><strong>{{ auth.quota.classifiers.used }}<small> / {{ auth.quota.classifiers.limit }}</small></strong><small>Active on Free</small></article>
           </div>
+          <div v-else class="kpi-grid">
+            <article><span>Platform calls</span><strong>{{ adminAnalytics.summary.calls.toLocaleString() }}</strong><small>All sources</small></article>
+            <article><span>Success rate</span><strong>{{ adminAnalytics.summary.calls ? Math.round(adminAnalytics.summary.successes / adminAnalytics.summary.calls * 100) : 0 }}%</strong><small>{{ adminAnalytics.summary.failures }} failed</small></article>
+            <article><span>Median latency</span><strong>{{ Math.round(adminAnalytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(adminAnalytics.summary.p95LatencyMs) }} ms</small></article>
+            <article><span>Accounts</span><strong>{{ adminAnalytics.summary.users }}</strong><small>{{ adminAnalytics.summary.workspaces }} workspaces</small></article>
+          </div>
           <div class="analytics-grid">
             <article class="usage-chart">
-              <div class="analytics-title"><div><span>Calls over time</span><h2>Daily activity</h2></div><small>{{ analytics.range.from.slice(0, 10) }} → {{ analytics.range.to.slice(0, 10) }}</small></div>
-              <div v-if="analytics.timeline.length" class="bar-chart">
-                <div v-for="item in analytics.timeline" :key="item.date"><span :style="{ height: `${Math.max(4, item.calls / maxTimelineCalls * 100)}%` }"><b>{{ item.calls }}</b></span><small>{{ new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</small></div>
+              <div class="analytics-title"><div><span>Calls over time</span><h2>Daily activity</h2></div><small>{{ visibleAnalytics.range.from.slice(0, 10) }} → {{ visibleAnalytics.range.to.slice(0, 10) }}</small></div>
+              <div v-if="visibleAnalytics.timeline.length" class="bar-chart">
+                <div v-for="item in visibleAnalytics.timeline" :key="item.date"><span :style="{ height: `${Math.max(4, item.calls / maxTimelineCalls * 100)}%` }"><b>{{ item.calls }}</b></span><small>{{ new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</small></div>
               </div>
               <div v-else class="analytics-empty">Calls will appear here as you test and use deployed classifiers.</div>
             </article>
-            <article class="classifier-usage">
+            <article v-if="analyticsScope === 'workspace'" class="classifier-usage">
               <div class="analytics-title"><div><span>Breakdown</span><h2>By classifier</h2></div></div>
               <div v-for="item in analytics.byClassifier" :key="item.classifierId" class="usage-row"><div><b>{{ item.name }}</b><small>{{ item.successes }} successful · {{ Math.round(item.averageLatencyMs) }} ms avg</small></div><strong>{{ item.calls }}</strong></div>
               <div v-if="!analytics.byClassifier.length" class="analytics-empty">No classifier activity yet.</div>
+            </article>
+            <article v-else class="classifier-usage workspace-usage">
+              <div class="analytics-title"><div><span>Tenants</span><h2>By workspace</h2></div><small>{{ adminAnalytics.workspaces.length }} total</small></div>
+              <div v-for="item in adminAnalytics.workspaces" :key="item.workspaceId" class="usage-row"><div><b>{{ item.name }}</b><small>{{ item.plan }} · {{ item.classifiers }} classifiers · {{ item.successes }} successful</small></div><strong>{{ item.calls }}</strong></div>
+              <div v-if="!adminAnalytics.workspaces.length" class="analytics-empty">No workspaces yet.</div>
             </article>
           </div>
         </template>
