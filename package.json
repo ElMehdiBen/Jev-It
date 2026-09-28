@@ -1,0 +1,26 @@
+{
+  "name": "jev-it",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"node --watch server.js\" \"vite\"",
+    "docker:dev": "docker compose -f compose.dev.yml up --build",
+    "docker:down": "docker compose -f compose.dev.yml down",
+    "docker:logs": "docker compose -f compose.dev.yml logs -f app mongo",
+    "build": "vite build",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "mongodb": "^7.7.0",
+    "openai": "^7.23.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.3",
+    "concurrently": "^9.1.2",
+    "vite": "^6.2.4"
+  }
+}

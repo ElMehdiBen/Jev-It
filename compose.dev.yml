@@ -1,0 +1,55 @@
+name: jev-studio-dev
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    init: true
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      VITE_DEV_HOST: 0.0.0.0
+      VITE_USE_POLLING: "true"
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-jev_studio}
+    # Docker cannot reliably forward through this host's systemd-resolved stub.
+    # Override DEV_DNS in .env if the host network's resolver changes.
+    dns:
+      - ${DEV_DNS:-172.20.10.1}
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5173:5173"
+      - "3001:3001"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  mongo:
+    image: mongodb/mongodb-community-server:8.0-ubi8
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  node_modules:
