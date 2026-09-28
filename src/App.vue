@@ -42,6 +42,20 @@ const analyticsLoading = ref(false)
 const questionEntries = computed(() => Object.entries(classifierDraft.value?.questions || {}))
 const draftEntries = computed(() => Object.entries(draft.value?.questions || {}))
 const deployedSnapshot = computed(() => selected.value?.deployments?.find((item) => item.version === selected.value.deployedVersion))
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]))
+  return value
+}
+function classifierContent(value) {
+  return canonicalize({ name: String(value?.name || '').trim(), description: String(value?.description || '').trim(), questions: value?.questions || {} })
+}
+const hasUnsavedChanges = computed(() => Boolean(selected.value && classifierDraft.value)
+  && JSON.stringify(classifierContent(classifierDraft.value)) !== JSON.stringify(classifierContent(selected.value)))
+const hasSavedDeploymentChanges = computed(() => Boolean(selected.value)
+  && (!deployedSnapshot.value || JSON.stringify(classifierContent(selected.value)) !== JSON.stringify(classifierContent(deployedSnapshot.value))))
+const canDeploy = computed(() => !deploying.value && !hasUnsavedChanges.value && hasSavedDeploymentChanges.value)
+const deployLabel = computed(() => deploying.value ? 'Deploying…' : hasUnsavedChanges.value ? 'Save draft first' : hasSavedDeploymentChanges.value ? 'Deploy draft' : 'Up to date')
 const endpointExample = computed(() => JSON.stringify({ classifier_id: selected.value?.id || 'cls_your_classifier', state: 'The state you want JEV to evaluate' }, null, 2))
 const directJevPayload = computed(() => JSON.stringify({
   state: 'The state you want JEV to evaluate',
@@ -264,12 +278,13 @@ async function runTests() {
 }
 
 async function deploy() {
+  if (!canDeploy.value) return
   deploying.value = true
   try {
-    await api(`/api/classifiers/${selected.value.id}/deploy`, { method: 'POST' })
+    const result = await api(`/api/classifiers/${selected.value.id}/deploy`, { method: 'POST' })
     await openClassifier(selected.value.id)
     activeTab.value = 'deploy'
-    notify('New version deployed')
+    notify(result.reused ? (result.activated ? `Existing version ${result.version} activated` : 'Draft is already deployed') : 'New version deployed')
   } catch (error) { pageError.value = error.message }
   finally { deploying.value = false }
 }
@@ -489,7 +504,7 @@ onMounted(async () => {
             <h1>{{ selected.name }}</h1>
             <p>{{ selected.description || 'No description yet.' }}</p>
           </div>
-          <Button class="deploy-button" type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy draft' }} <Rocket aria-hidden="true" /></Button>
+          <Button class="deploy-button" type="button" :disabled="!canDeploy" @click="deploy">{{ deployLabel }} <Rocket aria-hidden="true" /></Button>
         </div>
 
         <Tabs v-model="activeTab" class="classifier-tabs">
@@ -581,7 +596,7 @@ onMounted(async () => {
           <div class="deploy-summary">
             <span class="overline">Production control</span><h2>{{ selected.deployedVersion ? `Version ${selected.deployedVersion} is live.` : 'Nothing deployed yet.' }}</h2>
             <p>Deployments are immutable snapshots. Editing your draft never changes the active production classifier.</p>
-            <button type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy current draft' }} <span>↗</span></button>
+            <button type="button" :disabled="!canDeploy" @click="deploy">{{ deployLabel === 'Deploy draft' ? 'Deploy current draft' : deployLabel }} <span>↗</span></button>
           </div>
           <div class="version-list">
             <div class="section-title"><span>History</span><div><h2>Available versions</h2><p>Select any previous snapshot to roll production back.</p></div></div>
