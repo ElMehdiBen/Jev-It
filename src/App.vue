@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { Activity, BarChart3, CheckCircle2, Clock3, Copy, KeyRound, Layers3, LogOut, Plus, Rocket, Send, Users } from '@lucide/vue'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -354,7 +355,7 @@ onMounted(async () => {
         <span>Jev-It <span>Studio</span></span>
       </a>
 
-      <Button class="new-button" variant="outline" type="button" @click="newBuilder"><span>＋</span> New classifier</Button>
+      <Button class="new-button" variant="outline" type="button" @click="newBuilder"><Plus aria-hidden="true" /> New classifier</Button>
 
       <nav class="classifier-nav">
         <p>Your classifiers <span>{{ classifiers.length }}</span></p>
@@ -374,10 +375,10 @@ onMounted(async () => {
 
       <div class="sidebar-bottom">
         <button type="button" :class="{ active: currentView === 'analytics' }" @click="openAnalytics">
-          <span>⌁</span> Usage analytics
+          <BarChart3 aria-hidden="true" /> Usage analytics
         </button>
         <button type="button" :class="{ active: currentView === 'keys' }" @click="currentView = 'keys'; selected = null">
-          <span>⌁</span> API keys <i :class="['tiny-dot', { on: keyStatus.active }]"></i>
+          <KeyRound aria-hidden="true" /> API keys <i :class="['tiny-dot', { on: keyStatus.active }]"></i>
         </button>
         <div class="quota-mini" v-if="auth.quota">
           <div><span>Free plan</span><b>{{ auth.quota.apiCalls.used }} / {{ auth.quota.apiCalls.limit }} calls</b></div>
@@ -391,7 +392,7 @@ onMounted(async () => {
           <div><b>{{ auth.user.name }}</b><small>{{ auth.user.email }}</small></div>
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger as-child><Button variant="ghost" size="icon-xs" type="button" aria-label="Sign out" @click="logout">↗</Button></TooltipTrigger>
+              <TooltipTrigger as-child><Button variant="ghost" size="icon-xs" type="button" aria-label="Sign out" @click="logout"><LogOut aria-hidden="true" /></Button></TooltipTrigger>
               <TooltipContent side="right">Sign out</TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -446,7 +447,7 @@ onMounted(async () => {
               <Textarea v-model="chatInput" :disabled="sending || !health.openai" placeholder="Describe what the classifier should decide…" rows="2" @keydown.meta.enter.prevent="sendMessage" @keydown.ctrl.enter.prevent="sendMessage" />
               <div>
                 <span>{{ health.openai ? `${health.model} · low reasoning` : 'Add OPENAI_API_KEY to .env' }}</span>
-                <Button type="submit" :disabled="!chatInput.trim() || sending">{{ sending ? 'Thinking…' : 'Send' }} <b>↑</b></Button>
+                <Button type="submit" :disabled="!chatInput.trim() || sending">{{ sending ? 'Thinking…' : 'Send' }} <Send aria-hidden="true" /></Button>
               </div>
             </form>
           </div>
@@ -488,7 +489,7 @@ onMounted(async () => {
             <h1>{{ selected.name }}</h1>
             <p>{{ selected.description || 'No description yet.' }}</p>
           </div>
-          <Button class="deploy-button" type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy draft' }} <span>↗</span></Button>
+          <Button class="deploy-button" type="button" :disabled="deploying" @click="deploy">{{ deploying ? 'Deploying…' : 'Deploy draft' }} <Rocket aria-hidden="true" /></Button>
         </div>
 
         <Tabs v-model="activeTab" class="classifier-tabs">
@@ -535,7 +536,7 @@ onMounted(async () => {
             </div>
           </div>
           <aside class="editor-aside">
-            <div><span>Classifier ID</span><code>{{ selected.id }}</code><button @click="copy(selected.id)">Copy</button></div>
+            <div><span>Classifier ID</span><code>{{ selected.id }}</code><button @click="copy(selected.id)"><Copy aria-hidden="true" /> Copy</button></div>
             <div><span>Draft questions</span><strong>{{ questionEntries.length }}</strong></div>
             <div><span>Production</span><strong>{{ selected.deployedVersion ? `v${selected.deployedVersion}` : 'Not deployed' }}</strong></div>
             <button class="save-button" type="button" :disabled="saving" @click="saveClassifier">{{ saving ? 'Saving…' : 'Save draft' }} <span>→</span></button>
@@ -664,32 +665,32 @@ onMounted(async () => {
         <div v-if="analyticsLoading" class="analytics-loading">Calculating usage…</div>
         <template v-else-if="visibleAnalytics">
           <div v-if="analyticsScope === 'workspace'" class="kpi-grid">
-            <article><span>Total calls</span><strong>{{ analytics.summary.calls.toLocaleString() }}</strong><small>Playground + API</small></article>
-            <article><span>Success rate</span><strong>{{ analytics.summary.calls ? Math.round(analytics.summary.successes / analytics.summary.calls * 100) : 0 }}%</strong><small>{{ analytics.summary.failures }} failed</small></article>
-            <article><span>Median latency</span><strong>{{ Math.round(analytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(analytics.summary.p95LatencyMs) }} ms</small></article>
-            <article><span>Classifiers</span><strong>{{ auth.quota.classifiers.used }}<small> / {{ auth.quota.classifiers.limit }}</small></strong><small>Active on Free</small></article>
+            <article><span><Activity aria-hidden="true" /> Total calls</span><strong>{{ analytics.summary.calls.toLocaleString() }}</strong><small>Playground + API</small></article>
+            <article><span><CheckCircle2 aria-hidden="true" /> Success rate</span><strong>{{ analytics.summary.calls ? Math.round(analytics.summary.successes / analytics.summary.calls * 100) : 0 }}%</strong><small>{{ analytics.summary.failures }} failed</small></article>
+            <article><span><Clock3 aria-hidden="true" /> Median latency</span><strong>{{ Math.round(analytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(analytics.summary.p95LatencyMs) }} ms</small></article>
+            <article><span><Layers3 aria-hidden="true" /> Classifiers</span><strong>{{ auth.quota.classifiers.used }}<small> / {{ auth.quota.classifiers.limit }}</small></strong><small>Active on Free</small></article>
           </div>
           <div v-else class="kpi-grid">
-            <article><span>Platform calls</span><strong>{{ adminAnalytics.summary.calls.toLocaleString() }}</strong><small>All sources</small></article>
-            <article><span>Success rate</span><strong>{{ adminAnalytics.summary.calls ? Math.round(adminAnalytics.summary.successes / adminAnalytics.summary.calls * 100) : 0 }}%</strong><small>{{ adminAnalytics.summary.failures }} failed</small></article>
-            <article><span>Median latency</span><strong>{{ Math.round(adminAnalytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(adminAnalytics.summary.p95LatencyMs) }} ms</small></article>
-            <article><span>Accounts</span><strong>{{ adminAnalytics.summary.users }}</strong><small>{{ adminAnalytics.summary.workspaces }} workspaces</small></article>
+            <article><span><Activity aria-hidden="true" /> Platform calls</span><strong>{{ adminAnalytics.summary.calls.toLocaleString() }}</strong><small>All sources</small></article>
+            <article><span><CheckCircle2 aria-hidden="true" /> Success rate</span><strong>{{ adminAnalytics.summary.calls ? Math.round(adminAnalytics.summary.successes / adminAnalytics.summary.calls * 100) : 0 }}%</strong><small>{{ adminAnalytics.summary.failures }} failed</small></article>
+            <article><span><Clock3 aria-hidden="true" /> Median latency</span><strong>{{ Math.round(adminAnalytics.summary.p50LatencyMs) }}<small> ms</small></strong><small>p95 {{ Math.round(adminAnalytics.summary.p95LatencyMs) }} ms</small></article>
+            <article><span><Users aria-hidden="true" /> Accounts</span><strong>{{ adminAnalytics.summary.users }}</strong><small>{{ adminAnalytics.summary.workspaces }} workspaces</small></article>
           </div>
           <div class="analytics-grid">
             <article class="usage-chart">
-              <div class="analytics-title"><div><span>Calls over time</span><h2>Daily activity</h2></div><small>{{ visibleAnalytics.range.from.slice(0, 10) }} → {{ visibleAnalytics.range.to.slice(0, 10) }}</small></div>
+              <div class="analytics-title"><div><span><BarChart3 aria-hidden="true" /> Calls over time</span><h2>Daily activity</h2></div><small>{{ visibleAnalytics.range.from.slice(0, 10) }} → {{ visibleAnalytics.range.to.slice(0, 10) }}</small></div>
               <div v-if="visibleAnalytics.timeline.length" class="bar-chart">
                 <div v-for="item in visibleAnalytics.timeline" :key="item.date"><span :style="{ height: `${Math.max(4, item.calls / maxTimelineCalls * 100)}%` }"><b>{{ item.calls }}</b></span><small>{{ new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</small></div>
               </div>
               <div v-else class="analytics-empty">Calls will appear here as you test and use deployed classifiers.</div>
             </article>
             <article v-if="analyticsScope === 'workspace'" class="classifier-usage">
-              <div class="analytics-title"><div><span>Breakdown</span><h2>By classifier</h2></div></div>
+              <div class="analytics-title"><div><span><Layers3 aria-hidden="true" /> Breakdown</span><h2>By classifier</h2></div></div>
               <div v-for="item in analytics.byClassifier" :key="item.classifierId" class="usage-row"><div><b>{{ item.name }}</b><small>{{ item.successes }} successful · {{ Math.round(item.averageLatencyMs) }} ms avg</small></div><strong>{{ item.calls }}</strong></div>
               <div v-if="!analytics.byClassifier.length" class="analytics-empty">No classifier activity yet.</div>
             </article>
             <article v-else class="classifier-usage workspace-usage">
-              <div class="analytics-title"><div><span>Tenants</span><h2>By workspace</h2></div><small>{{ adminAnalytics.workspaces.length }} total</small></div>
+              <div class="analytics-title"><div><span><Users aria-hidden="true" /> Tenants</span><h2>By workspace</h2></div><small>{{ adminAnalytics.workspaces.length }} total</small></div>
               <div v-for="item in adminAnalytics.workspaces" :key="item.workspaceId" class="usage-row"><div><b>{{ item.name }}</b><small>{{ item.plan }} · {{ item.classifiers }} classifiers · {{ item.successes }} successful</small></div><strong>{{ item.calls }}</strong></div>
               <div v-if="!adminAnalytics.workspaces.length" class="analytics-empty">No workspaces yet.</div>
             </article>
