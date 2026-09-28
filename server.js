@@ -6,6 +6,7 @@ import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify as ve
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { deploymentContent, deploymentContentHash } from './deployment-utils.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
@@ -680,17 +681,45 @@ app.post('/api/classifiers/:id/test', handleRoute(async (request, response) => {
 app.post('/api/classifiers/:id/deploy', handleRoute(async (request, response) => {
   const db = await getDb()
   const collection = db.collection('classifiers')
-  const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
-  if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
-  const validationError = validateQuestions(classifier.questions)
-  if (validationError) return response.status(400).json({ error: validationError })
-  const version = Math.max(0, ...(classifier.deployments || []).map((item) => item.version)) + 1
-  const snapshot = { version, name: classifier.name, description: classifier.description, questions: classifier.questions, deployedAt: new Date() }
-  await collection.updateOne(
-    { id: classifier.id, workspaceId: request.workspaceId },
-    { $set: { deployedVersion: version, updatedAt: new Date() }, $push: { deployments: snapshot, deploymentEvents: { version, action: 'deploy', createdAt: new Date() } } },
-  )
-  response.status(201).json(snapshot)
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
+    if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
+    const validationError = validateQuestions(classifier.questions)
+    if (validationError) return response.status(400).json({ error: validationError })
+
+    const contentHash = deploymentContentHash(classifier)
+    const existing = (classifier.deployments || []).find((deployment) => (deployment.contentHash || deploymentContentHash(deployment)) === contentHash)
+    if (existing) {
+      let activated = existing.version !== classifier.deployedVersion
+      if (activated) {
+        const now = new Date()
+        const activation = await collection.updateOne(
+          { id: classifier.id, workspaceId: request.workspaceId, deployedVersion: { $ne: existing.version } },
+          { $set: { deployedVersion: existing.version, updatedAt: now }, $push: { deploymentEvents: { version: existing.version, action: 'activate', reason: 'identical_draft', createdAt: now } } },
+        )
+        activated = Boolean(activation.modifiedCount)
+      }
+      return response.json({ ...cleanDocument(existing), contentHash, reused: true, activated })
+    }
+
+    const version = Math.max(0, ...(classifier.deployments || []).map((item) => item.version)) + 1
+    const now = new Date()
+    const snapshot = { version, ...deploymentContent(classifier), contentHash, deployedAt: now }
+    const result = await collection.updateOne(
+      {
+        id: classifier.id,
+        workspaceId: request.workspaceId,
+        'deployments.version': { $ne: version },
+        deployments: { $not: { $elemMatch: { contentHash } } },
+      },
+      { $set: { deployedVersion: version, updatedAt: now }, $push: { deployments: snapshot, deploymentEvents: { version, action: 'deploy', createdAt: now } } },
+    )
+    if (result.modifiedCount) return response.status(201).json({ ...snapshot, reused: false, activated: true })
+  }
+
+  const error = new Error('The draft changed while it was being deployed. Please try again.')
+  error.status = 409
+  throw error
 }))
 
 app.post('/api/classifiers/:id/activate/:version', handleRoute(async (request, response) => {

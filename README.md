@@ -107,6 +107,13 @@ curl -X POST http://127.0.0.1:3001/api/classify \
 
 The endpoint returns the complete raw TypeSafe/JEV response. Draft edits do not affect this endpoint until a new version is explicitly deployed.
 
+Deployments are content-idempotent. Deploying an unchanged saved draft reuses its existing immutable version, including under concurrent requests. To audit older databases and remove exact duplicate snapshots while preserving the active version, run a dry check before applying the cleanup:
+
+```bash
+npm run db:dedupe-deployments -- --dry-run
+npm run db:dedupe-deployments -- --apply
+```
+
 ## Production
 
 ```bash
