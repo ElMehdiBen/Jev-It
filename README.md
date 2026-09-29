@@ -157,7 +157,7 @@ cp .env.production.example .env.production
 docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ```
 
-The production stack builds the Vue application into a minimal non-root Node image, places it behind Caddy with automatic HTTPS, and runs authenticated MongoDB on a private Docker network with no published database port. See the complete [production deployment guide](docs/DEPLOYMENT.md) for DNS, Google OAuth, secrets, backups, updates, firewall rules, and operations.
+The production stack builds the Vue application and API into one minimal non-root Node image on a configurable upstream port, ready for Nginx Proxy Manager or another external reverse proxy. Authenticated MongoDB remains on a private Docker network with no published database port. An optional bundled Caddy profile is also available. See the complete [production deployment guide](docs/DEPLOYMENT.md) for DNS, proxy configuration, Google OAuth, secrets, backups, updates, and firewall rules.
 
 ## Contributing
 

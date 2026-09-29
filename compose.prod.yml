@@ -8,11 +8,12 @@ x-logging: &default-logging
 
 services:
   proxy:
+    profiles: ["caddy"]
     image: caddy:2-alpine
     entrypoint: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     environment:
-      DOMAIN: ${DOMAIN:?Set DOMAIN in .env.production}
-      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env.production}
+      DOMAIN: ${DOMAIN:-localhost}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
@@ -51,8 +52,8 @@ services:
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-jev_studio}
       MONGODB_URI: mongodb://${MONGO_APP_USERNAME:?Set MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD}@mongo:27017/${MONGODB_DATABASE:-jev_studio}?authSource=${MONGODB_DATABASE:-jev_studio}
-    expose:
-      - "3001"
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3001}:3001"
     depends_on:
       mongo:
         condition: service_healthy
