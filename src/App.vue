@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { Activity, BarChart3, CheckCircle2, Clock3, Copy, KeyRound, Layers3, LogOut, Plus, Rocket, Send, Users } from '@lucide/vue'
+import { Activity, BarChart3, CheckCircle2, Clock3, Copy, Eye, Fingerprint, KeyRound, Layers3, LogOut, Plus, RefreshCw, Rocket, Send, Users } from '@lucide/vue'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -190,6 +190,7 @@ async function openClassifier(classifierId) {
   pageError.value = ''
   currentView.value = 'classifier'
   activeTab.value = 'configure'
+  classifierDraft.value = null
   try {
     selected.value = await api(`/api/classifiers/${classifierId}`)
     classifierDraft.value = JSON.parse(JSON.stringify(selected.value))
@@ -658,12 +659,12 @@ onMounted(async () => {
       <section v-else-if="currentView === 'keys'" class="keys-view">
         <div class="keys-hero"><span class="overline">Project access</span><h1>API keys</h1><p>Keys authenticate calls to your deployed classifiers. JEV and OpenAI credentials always remain server-side.</p></div>
         <div class="key-card">
-          <div class="key-card-head"><div class="key-symbol">⌁</div><div><h2>{{ keyStatus.active ? 'Production key' : 'No active key' }}</h2><p>{{ keyStatus.active ? `Created ${formatDate(keyStatus.createdAt)}` : 'Generate a key to call /api/classify.' }}</p></div><span v-if="keyStatus.active" class="active-key"><i></i> Active</span></div>
-          <div v-if="revealedKey" class="revealed-key"><span>Copy this key now—it won’t be shown again.</span><div><code>{{ revealedKey }}</code><button @click="copy(revealedKey)">Copy</button></div></div>
+          <div class="key-card-head"><div class="key-symbol"><KeyRound aria-hidden="true" /></div><div><h2>{{ keyStatus.active ? 'Production key' : 'No active key' }}</h2><p>{{ keyStatus.active ? `Created ${formatDate(keyStatus.createdAt)}` : 'Generate a key to call /api/classify.' }}</p></div><span v-if="keyStatus.active" class="active-key"><CheckCircle2 aria-hidden="true" /> Active</span></div>
+          <div v-if="revealedKey" class="revealed-key"><span>Copy this key now—it won’t be shown again.</span><div><code>{{ revealedKey }}</code><button @click="copy(revealedKey)"><Copy aria-hidden="true" /> Copy</button></div></div>
           <div v-else-if="keyStatus.active" class="masked-key"><code>{{ keyStatus.prefix }}••••••••••••••••••••••</code><span>Stored as a SHA-256 hash</span></div>
-          <div class="key-actions"><button class="primary" type="button" @click="rotateKey">{{ keyStatus.active ? 'Rotate key' : 'Generate key' }} <span>→</span></button><button v-if="keyStatus.active" type="button" @click="revokeKey">Revoke</button></div>
+          <div class="key-actions"><button class="primary" type="button" @click="rotateKey"><RefreshCw aria-hidden="true" /> {{ keyStatus.active ? 'Rotate key' : 'Generate key' }} <span>→</span></button><button v-if="keyStatus.active" type="button" @click="revokeKey">Revoke</button></div>
         </div>
-        <div class="security-grid"><article><span>01</span><h3>Shown once</h3><p>The plaintext secret is returned only when it is generated.</p></article><article><span>02</span><h3>Hashed at rest</h3><p>MongoDB stores a one-way SHA-256 digest, never the original key.</p></article><article><span>03</span><h3>Instant rotation</h3><p>Rotating revokes the old key before creating the replacement.</p></article></div>
+        <div class="security-grid"><article><span><Eye aria-hidden="true" /></span><h3>Shown once</h3><p>The plaintext secret is returned only when it is generated.</p></article><article><span><Fingerprint aria-hidden="true" /></span><h3>Hashed at rest</h3><p>MongoDB stores a one-way SHA-256 digest, never the original key.</p></article><article><span><RefreshCw aria-hidden="true" /></span><h3>Instant rotation</h3><p>Rotating revokes the old key before creating the replacement.</p></article></div>
       </section>
 
       <section v-else class="analytics-view">

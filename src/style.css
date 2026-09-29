@@ -161,7 +161,7 @@ h1, h2, h3, h4, strong, b { font-weight: 600; }
 .api-example-title p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .code-actions { display: flex; align-items: center; gap: 18px; }
 .code-card button:disabled { opacity: .35; cursor: not-allowed; }
-.direct-jev-card pre { max-height: 480px; overflow: auto; white-space: pre; }
+.direct-jev-card pre { max-height: none; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
 .direct-jev-card.disabled { opacity: .65; }
 .code-card > .undeployed-export { display: block; height: auto; min-height: 74px; padding: 28px; color: #aaa89f; font-size: 12px; line-height: 1.5; }
 
@@ -178,6 +178,23 @@ h1, h2, h3, h4, strong, b { font-weight: 600; }
 .raw-response-body pre { margin: 0; max-height: 420px; overflow: auto; padding: 24px 100px 24px 22px; white-space: pre; font: 11px/1.75 'DM Mono', monospace; }
 
 .keys-view { padding: 58px min(7vw, 100px); }.keys-hero { max-width: 720px; margin-bottom: 43px; }.keys-hero p { font-size: 14px; line-height: 1.7; }.key-card { padding: 30px; max-width: 940px; }.key-card-head { grid-template-columns: 48px 1fr auto; gap: 17px; }.key-symbol { width: 46px; height: 46px; }.key-card h2 { font-size: 21px; }.key-card p { margin-top: 6px; font-size: 12px; }.active-key { font-size: 9px; }.masked-key, .revealed-key { margin: 28px 0 22px; padding: 18px; }.masked-key code, .revealed-key code { font-size: 11px; }.masked-key span, .revealed-key > span { font-size: 10px; }.key-actions button { height: 43px; padding: 0 17px; font-size: 11px; }.security-grid { max-width: 940px; margin-top: 28px; }.security-grid article { padding: 25px; }.security-grid span { font-size: 10px; }.security-grid h3 { margin: 18px 0 7px; font-size: 14px; }.security-grid p { font-size: 11px; line-height: 1.6; }
+.key-card, .security-grid { border-radius: var(--radius); box-shadow: 0 1px 2px rgba(23,23,18,.04); }
+.key-symbol { border-radius: 6px; }
+.key-symbol svg { width: 21px; height: 21px; stroke-width: 1.8; }
+.active-key { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid rgba(35,129,108,.25); border-radius: 999px; }
+.active-key svg { width: 12px; height: 12px; stroke-width: 2; }
+.masked-key { border-radius: 4px; border: 1px solid rgba(23,23,18,.06); }
+.revealed-key button, .key-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 4px; }
+.revealed-key button svg, .key-actions button svg { width: 14px; height: 14px; stroke-width: 1.9; }
+.key-actions button { transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.key-actions button:hover { border-color: var(--ink); }
+.key-actions button:active { transform: translateY(1px); }
+.key-actions button.primary { justify-content: flex-start; }
+.key-actions button.primary span { margin-left: auto; }
+.security-grid article { transition: background .18s ease; }
+.security-grid article:hover { background: #f7f4ed; }
+.security-grid span { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid rgba(255,91,34,.24); border-radius: 50%; }
+.security-grid span svg { width: 14px; height: 14px; stroke-width: 1.8; }
 .toast { padding: 14px 18px; font-size: 12px; }
 
 .auth-screen { min-height: 100vh; background: var(--ink); color: white; display: grid; grid-template-rows: auto 1fr auto; padding: 38px clamp(28px, 6vw, 90px) 30px; }
