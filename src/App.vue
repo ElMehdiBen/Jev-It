@@ -103,8 +103,18 @@ async function api(path, options = {}) {
   })
   if (response.status === 204) return null
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || t('error.request'))
+  if (!response.ok) throw new Error(data.code === 'openai_connection_timeout' ? t('error.openaiTimeout') : data.error || t('error.request'))
   return data
+}
+
+const knownBuilderGreetings = new Set([
+  'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.',
+  'Quelle décision votre classificateur doit-il prendre ? Décrivez les données qu’il recevra et ce que votre logiciel doit savoir.',
+  'ما القرار الذي تريد من المصنّف اتخاذه؟ أخبرني عن المدخلات التي سيتلقاها وما الذي يحتاج برنامجك إلى معرفته.',
+])
+
+function messageContent(message, index) {
+  return message.kind === 'greeting' || (index === 0 && message.role === 'assistant' && knownBuilderGreetings.has(message.content)) ? t('builder.greeting') : message.content
 }
 
 function notify(message) {
@@ -535,7 +545,7 @@ onMounted(async () => {
             <div ref="chatLog" class="chat-log">
               <div v-for="(message, index) in session.messages" :key="index" class="message" :class="message.role">
                 <span class="message-avatar">{{ message.role === 'assistant' ? 'J' : 'Y' }}</span>
-                <div><small>{{ message.role === 'assistant' ? t('builder.architect') : t('builder.you') }}</small><p>{{ message.content }}</p></div>
+                <div><small>{{ message.role === 'assistant' ? t('builder.architect') : t('builder.you') }}</small><p>{{ messageContent(message, index) }}</p></div>
               </div>
               <div v-if="sending" class="message assistant">
                 <span class="message-avatar">J</span><div><small>{{ t('builder.architect') }}</small><p class="thinking"><i></i><i></i><i></i></p></div>

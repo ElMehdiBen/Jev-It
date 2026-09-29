@@ -99,6 +99,12 @@ function builderGreeting(language) {
   return 'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.'
 }
 
+function isBuilderGreeting(message, index) {
+  if (message?.kind === 'greeting') return true
+  if (index !== 0 || message?.role !== 'assistant') return false
+  return ['en', 'fr', 'ar'].some((language) => message.content === builderGreeting(language))
+}
+
 function languagePolicy(language) {
   if (language === 'fr') return 'Respond in French. Write the classifier name, description, instructions, option descriptions, and score levels in French. Keep machine-readable keys in ASCII snake_case.'
   if (language === 'ar') return 'Respond in Arabic. Write the classifier name, description, instructions, option descriptions, and score levels in Arabic. Keep machine-readable keys in ASCII snake_case.'
@@ -127,9 +133,10 @@ function handleRoute(handler) {
     } catch (error) {
       console.error(error)
       const isMongo = error?.name?.includes('Mongo') || error?.message?.includes('ECONNREFUSED')
-      response.status(error.status || (isMongo ? 503 : 500)).json({
-        error: isMongo ? 'MongoDB is not available.' : error.message || 'Something went wrong.',
-        code: error.code,
+      const isOpenAiTimeout = error?.name === 'APIConnectionTimeoutError' || error?.cause?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT'
+      response.status(error.status || (isMongo || isOpenAiTimeout ? 503 : 500)).json({
+        error: isMongo ? 'MongoDB is not available.' : isOpenAiTimeout ? 'Luna could not reach OpenAI in time. Check the server network and retry.' : error.message || 'Something went wrong.',
+        code: isOpenAiTimeout ? 'openai_connection_timeout' : error.code,
         limit: error.limit,
         used: error.used,
         resetsAt: error.resetsAt,
@@ -586,7 +593,7 @@ app.post('/api/builder/sessions', handleRoute(async (request, response) => {
     workspaceId: request.workspaceId,
     userId: request.auth.user.id,
     language,
-    messages: [{ role: 'assistant', content: builderGreeting(language), createdAt: now }],
+    messages: [{ role: 'assistant', kind: 'greeting', content: builderGreeting(language), createdAt: now }],
     draft: { name: 'New classifier', description: '', language, questions: {}, ready: false },
     createdAt: now,
     updatedAt: now,
@@ -614,9 +621,12 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
 
   const language = classifierLanguage(request.body?.language, session.language || 'auto')
   const userMessage = { role: 'user', content, createdAt: new Date() }
-  const conversation = [...session.messages, userMessage]
+  const conversation = [
+    ...session.messages.map((message, index) => isBuilderGreeting(message, index) ? { ...message, content: builderGreeting(language) } : message),
+    userMessage,
+  ]
   const currentDraft = session.draft || { name: '', description: '', questions: {} }
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 45_000, maxRetries: 1 })
   const apiResponse = await openai.responses.create({
     model: process.env.OPENAI_MODEL || 'gpt-6-luna',
     reasoning: { effort: 'low' },
