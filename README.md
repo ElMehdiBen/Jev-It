@@ -49,8 +49,8 @@ Workspace analytics show quota consumption, success rate, latency, daily activit
 - Authenticates users with Google SSO and isolates every resource by workspace.
 - Enforces Free plan classifier and monthly JEV-call quotas.
 - Tracks privacy-conscious usage analytics without storing input states or model responses.
-- Localizes the Studio in English, French, and Arabic, persists the chosen locale, and provides a native RTL layout for Arabic.
-- Gives each classifier an explicit English, French, Arabic, or automatic/multilingual language policy that is preserved in every deployment.
+- Localizes the Studio in English and French and persists the chosen locale.
+- Gives each classifier an explicit English, French, or automatic/multilingual language policy that is preserved in every deployment.
 
 ## Technology
 
@@ -103,9 +103,9 @@ On first sign-in, Jev-It creates a personal Free workspace. Existing unowned dat
 
 Archiving a classifier immediately disables its production endpoint and releases its active-classifier quota slot. Its immutable deployment history and usage analytics remain available. Restoring it reclaims a slot and resumes its previously active deployment; if the workspace is at its plan limit, another classifier must be archived first. Permanent deletion is deliberately available only from the archive. Historical aggregate analytics are retained and identify the removed classifier as deleted.
 
-The Studio interface supports English, French, and Arabic. The locale selector changes interface copy, date formatting, and document direction, and the choice is saved in the browser. Classifier language is separate from interface language:
+The Studio interface supports English and French. The locale selector changes interface copy and date formatting, and the choice is saved in the browser. Classifier language is separate from interface language:
 
-- **English, French, or Arabic** keeps builder responses and all human-readable classifier content in that language. During execution, JEV receives an explicit instruction to interpret the state in that language.
+- **English or French** keeps builder responses and all human-readable classifier content in that language. During execution, JEV receives an explicit instruction to interpret the state in that language.
 - **Automatic / multilingual** follows the language used in the builder conversation and does not force an execution language, making it suitable for mixed-language inputs.
 
 Machine-readable question and option keys remain ASCII `snake_case` in every mode so integrations are stable across languages. Because language is part of an immutable deployment snapshot, changing it requires deploying the saved draft before production behavior changes.

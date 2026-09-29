@@ -12,7 +12,7 @@ export function deploymentContent(value) {
   return {
     name: String(value?.name || '').trim(),
     description: String(value?.description || '').trim(),
-    language: ['auto', 'en', 'fr', 'ar'].includes(value?.language) ? value.language : 'auto',
+    language: ['auto', 'en', 'fr'].includes(value?.language) ? value.language : 'auto',
     questions: value?.questions || {},
   }
 }
