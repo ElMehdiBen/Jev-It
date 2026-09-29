@@ -24,6 +24,7 @@ const platformAdminEmails = new Set(String(process.env.PLATFORM_ADMIN_EMAILS || 
 const googleAuthorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth'
 const googleTokenEndpoint = 'https://oauth2.googleapis.com/token'
 const googleJwksEndpoint = 'https://www.googleapis.com/oauth2/v3/certs'
+const supportedClassifierLanguages = new Set(['auto', 'en', 'fr', 'ar'])
 let googleJwks = { expiresAt: 0, keys: [] }
 
 app.disable('x-powered-by')
@@ -85,6 +86,38 @@ function cleanDocument(document) {
   if (!document) return null
   const { _id, ...clean } = document
   return clean
+}
+
+function classifierLanguage(value, fallback = 'auto') {
+  const language = String(value || '').trim().toLowerCase()
+  return supportedClassifierLanguages.has(language) ? language : fallback
+}
+
+function builderGreeting(language) {
+  if (language === 'fr') return 'Quelle décision votre classificateur doit-il prendre ? Décrivez les données qu’il recevra et ce que votre logiciel doit savoir.'
+  if (language === 'ar') return 'ما القرار الذي تريد من المصنّف اتخاذه؟ أخبرني عن المدخلات التي سيتلقاها وما الذي يحتاج برنامجك إلى معرفته.'
+  return 'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.'
+}
+
+function languagePolicy(language) {
+  if (language === 'fr') return 'Respond in French. Write the classifier name, description, instructions, option descriptions, and score levels in French. Keep machine-readable keys in ASCII snake_case.'
+  if (language === 'ar') return 'Respond in Arabic. Write the classifier name, description, instructions, option descriptions, and score levels in Arabic. Keep machine-readable keys in ASCII snake_case.'
+  if (language === 'en') return 'Respond in English. Write the classifier name, description, instructions, option descriptions, and score levels in English. Keep machine-readable keys in ASCII snake_case.'
+  return 'Follow the language used by the user. Preserve that language throughout the classifier. If the use case is multilingual, write language-neutral evaluation instructions where possible. Keep machine-readable keys in ASCII snake_case.'
+}
+
+export function questionsForJev(questions = {}, language = 'auto') {
+  const directives = {
+    en: 'Interpret the supplied state in English.',
+    fr: 'Interprétez l’état fourni en français.',
+    ar: 'فسّر الحالة المقدمة باللغة العربية.',
+  }
+  const directive = directives[classifierLanguage(language)]
+  if (!directive) return questions
+  return Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, {
+    ...question,
+    instructions: `${directive} ${String(question.instructions || '').trim()}`,
+  }]))
 }
 
 function handleRoute(handler) {
@@ -402,7 +435,7 @@ function validateQuestions(questions) {
   return null
 }
 
-async function callJev(state, questions) {
+async function callJev(state, questions, language = 'auto') {
   if (!process.env.TYPESAFE_API_KEY) {
     const error = new Error('Add TYPESAFE_API_KEY to .env before testing classifiers.')
     error.status = 503
@@ -411,7 +444,7 @@ async function callJev(state, questions) {
   const request = {
     method: 'POST',
     headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state, model: process.env.TYPESAFE_MODEL || 'jev-latest', questions }),
+    body: JSON.stringify({ state, model: process.env.TYPESAFE_MODEL || 'jev-latest', questions: questionsForJev(questions, language) }),
   }
   let upstream
   let lastError
@@ -529,13 +562,17 @@ app.use('/api/admin', requireSession)
 
 app.get('/api/classifiers', handleRoute(async (request, response) => {
   const db = await getDb()
-  const items = await db.collection('classifiers').find({ workspaceId: request.workspaceId, archivedAt: null }, { projection: { _id: 0, deployments: 0 } }).sort({ updatedAt: -1 }).toArray()
+  const archived = request.query.archived === 'true'
+  const items = await db.collection('classifiers').find(
+    { workspaceId: request.workspaceId, archivedAt: archived ? { $ne: null } : null },
+    { projection: { _id: 0, deployments: 0, deploymentEvents: 0 } },
+  ).sort({ [archived ? 'archivedAt' : 'updatedAt']: -1 }).toArray()
   response.json({ items })
 }))
 
 app.get('/api/classifiers/:id', handleRoute(async (request, response) => {
   const db = await getDb()
-  const classifier = cleanDocument(await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId }))
+  const classifier = cleanDocument(await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: null }))
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   response.json(classifier)
 }))
@@ -543,12 +580,14 @@ app.get('/api/classifiers/:id', handleRoute(async (request, response) => {
 app.post('/api/builder/sessions', handleRoute(async (request, response) => {
   const db = await getDb()
   const now = new Date()
+  const language = classifierLanguage(request.body?.language, 'en')
   const session = {
     id: id('build'),
     workspaceId: request.workspaceId,
     userId: request.auth.user.id,
-    messages: [{ role: 'assistant', content: 'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.', createdAt: now }],
-    draft: { name: 'New classifier', description: '', questions: {}, ready: false },
+    language,
+    messages: [{ role: 'assistant', content: builderGreeting(language), createdAt: now }],
+    draft: { name: 'New classifier', description: '', language, questions: {}, ready: false },
     createdAt: now,
     updatedAt: now,
   }
@@ -573,6 +612,7 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
   const session = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
   if (!session) return response.status(404).json({ error: 'Builder session not found.' })
 
+  const language = classifierLanguage(request.body?.language, session.language || 'auto')
   const userMessage = { role: 'user', content, createdAt: new Date() }
   const conversation = [...session.messages, userMessage]
   const currentDraft = session.draft || { name: '', description: '', questions: {} }
@@ -582,7 +622,7 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
     reasoning: { effort: 'low' },
     store: false,
     input: [
-      { role: 'system', content: builderInstructions },
+      { role: 'system', content: `${builderInstructions}\n\nLanguage policy:\n${languagePolicy(language)}` },
       ...conversation.map((message) => ({ role: message.role, content: message.content })),
       { role: 'system', content: `Current structured draft JSON:\n${JSON.stringify({ suggested_name: currentDraft.name, suggested_description: currentDraft.description, questions: draftToBuilderQuestions(currentDraft.questions) })}` },
     ],
@@ -591,11 +631,11 @@ app.post('/api/builder/sessions/:id/messages', handleRoute(async (request, respo
 
   if (!apiResponse.output_text) throw new Error('The builder did not return a usable response.')
   const result = JSON.parse(apiResponse.output_text)
-  const draft = normalizeDraft(result)
+  const draft = { ...normalizeDraft(result), language }
   const assistantMessage = { role: 'assistant', content: result.assistant_message, createdAt: new Date() }
   await collection.updateOne(
     { id: session.id, workspaceId: request.workspaceId },
-    { $set: { draft, updatedAt: new Date() }, $push: { messages: { $each: [userMessage, assistantMessage] } } },
+    { $set: { draft, language, updatedAt: new Date() }, $push: { messages: { $each: [userMessage, assistantMessage] } } },
   )
   response.json({ message: assistantMessage, draft, ready: draft.ready })
 }))
@@ -620,6 +660,7 @@ app.post('/api/builder/sessions/:id/create', handleRoute(async (request, respons
     createdBy: request.auth.user.id,
     name: session.draft.name,
     description: session.draft.description,
+    language: classifierLanguage(session.draft.language || session.language),
     questions: session.draft.questions,
     deployedVersion: null,
     deployments: [],
@@ -639,14 +680,14 @@ app.post('/api/builder/sessions/:id/create', handleRoute(async (request, respons
 }))
 
 app.put('/api/classifiers/:id', handleRoute(async (request, response) => {
-  const { name, description, questions } = request.body || {}
+  const { name, description, questions, language } = request.body || {}
   if (!String(name || '').trim()) return response.status(400).json({ error: 'A classifier name is required.' })
   const validationError = validateQuestions(questions)
   if (validationError) return response.status(400).json({ error: validationError })
   const db = await getDb()
   const result = await db.collection('classifiers').findOneAndUpdate(
-    { id: request.params.id, workspaceId: request.workspaceId },
-    { $set: { name: String(name).trim(), description: String(description || '').trim(), questions, updatedAt: new Date() } },
+    { id: request.params.id, workspaceId: request.workspaceId, archivedAt: null },
+    { $set: { name: String(name).trim(), description: String(description || '').trim(), language: classifierLanguage(language), questions, updatedAt: new Date() } },
     { returnDocument: 'after' },
   )
   if (!result) return response.status(404).json({ error: 'Classifier not found.' })
@@ -658,7 +699,7 @@ app.post('/api/classifiers/:id/test', handleRoute(async (request, response) => {
   if (!states.length) return response.status(400).json({ error: 'Add at least one test state.' })
   if (states.length > 20) return response.status(400).json({ error: 'A test run supports up to 20 states.' })
   const db = await getDb()
-  const classifier = await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId })
+  const classifier = await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: null })
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   const validationError = validateQuestions(classifier.questions)
   if (validationError) return response.status(400).json({ error: validationError })
@@ -667,7 +708,7 @@ app.post('/api/classifiers/:id/test', handleRoute(async (request, response) => {
     await reserveJevExecution(db, request.auth.workspace)
     const startedAt = Date.now()
     try {
-      const jevResponse = await callJev(state, classifier.questions)
+      const jevResponse = await callJev(state, classifier.questions, classifier.language)
       await recordApiCall(db, { workspaceId: request.workspaceId, classifierId: classifier.id, deploymentVersion: null, source: 'playground', status: 'success', httpStatus: 200, latencyMs: Date.now() - startedAt })
       results.push({ state, response: jevResponse })
     } catch (error) {
@@ -682,13 +723,13 @@ app.post('/api/classifiers/:id/deploy', handleRoute(async (request, response) =>
   const db = await getDb()
   const collection = db.collection('classifiers')
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId })
+    const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: null })
     if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
     const validationError = validateQuestions(classifier.questions)
     if (validationError) return response.status(400).json({ error: validationError })
 
     const contentHash = deploymentContentHash(classifier)
-    const existing = (classifier.deployments || []).find((deployment) => (deployment.contentHash || deploymentContentHash(deployment)) === contentHash)
+    const existing = (classifier.deployments || []).find((deployment) => deploymentContentHash(deployment) === contentHash)
     if (existing) {
       let activated = existing.version !== classifier.deployedVersion
       if (activated) {
@@ -726,13 +767,60 @@ app.post('/api/classifiers/:id/activate/:version', handleRoute(async (request, r
   const version = Number(request.params.version)
   const db = await getDb()
   const collection = db.collection('classifiers')
-  const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId, 'deployments.version': version })
+  const classifier = await collection.findOne({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: null, 'deployments.version': version })
   if (!classifier) return response.status(404).json({ error: 'Deployment version not found.' })
   await collection.updateOne(
     { id: classifier.id, workspaceId: request.workspaceId },
     { $set: { deployedVersion: version, updatedAt: new Date() }, $push: { deploymentEvents: { version, action: 'activate', createdAt: new Date() } } },
   )
   response.json({ deployedVersion: version })
+}))
+
+app.post('/api/classifiers/:id/archive', handleRoute(async (request, response) => {
+  const db = await getDb()
+  const now = new Date()
+  const classifier = await db.collection('classifiers').findOneAndUpdate(
+    { id: request.params.id, workspaceId: request.workspaceId, archivedAt: null },
+    { $set: { archivedAt: now, updatedAt: now } },
+    { returnDocument: 'after' },
+  )
+  if (!classifier) return response.status(404).json({ error: 'Active classifier not found.' })
+  await db.collection('workspaces').updateOne(
+    { id: request.workspaceId, 'usage.activeClassifiers': { $gt: 0 } },
+    { $inc: { 'usage.activeClassifiers': -1 }, $set: { updatedAt: now } },
+  )
+  response.json(cleanDocument(classifier))
+}))
+
+app.post('/api/classifiers/:id/restore', handleRoute(async (request, response) => {
+  const db = await getDb()
+  const workspace = await db.collection('workspaces').findOneAndUpdate(
+    { id: request.workspaceId, 'usage.activeClassifiers': { $lt: request.auth.workspace.quotas?.maxClassifiers ?? freeQuotas.maxClassifiers } },
+    { $inc: { 'usage.activeClassifiers': 1 }, $set: { updatedAt: new Date() } },
+    { returnDocument: 'after' },
+  )
+  if (!workspace) return response.status(403).json({ error: 'Classifier limit reached. Archive another classifier before restoring this one.', code: 'classifier_quota_exceeded' })
+  const classifier = await db.collection('classifiers').findOneAndUpdate(
+    { id: request.params.id, workspaceId: request.workspaceId, archivedAt: { $ne: null } },
+    { $set: { archivedAt: null, updatedAt: new Date() } },
+    { returnDocument: 'after' },
+  )
+  if (!classifier) {
+    await db.collection('workspaces').updateOne({ id: request.workspaceId }, { $inc: { 'usage.activeClassifiers': -1 } })
+    return response.status(404).json({ error: 'Archived classifier not found.' })
+  }
+  response.json(cleanDocument(classifier))
+}))
+
+app.delete('/api/classifiers/:id', handleRoute(async (request, response) => {
+  const db = await getDb()
+  const classifier = await db.collection('classifiers').findOneAndDelete({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: { $ne: null } })
+  if (!classifier) {
+    const active = await db.collection('classifiers').findOne({ id: request.params.id, workspaceId: request.workspaceId, archivedAt: null })
+    return response.status(active ? 409 : 404).json({ error: active ? 'Archive the classifier before deleting it permanently.' : 'Archived classifier not found.' })
+  }
+  await db.collection('builder_sessions').deleteMany({ workspaceId: request.workspaceId, classifierId: classifier.id })
+  response.status(204).end()
 }))
 
 app.get('/api/keys', handleRoute(async (request, response) => {
@@ -874,14 +962,14 @@ app.post('/api/classify', requireProjectKey, handleRoute(async (request, respons
   const db = await getDb()
   const workspace = await db.collection('workspaces').findOne({ id: request.workspaceId })
   if (!workspace) return response.status(401).json({ error: 'The API key workspace no longer exists.' })
-  const classifier = await db.collection('classifiers').findOne({ id: classifierId, workspaceId: request.workspaceId })
+  const classifier = await db.collection('classifiers').findOne({ id: classifierId, workspaceId: request.workspaceId, archivedAt: null })
   if (!classifier) return response.status(404).json({ error: 'Classifier not found.' })
   if (!classifier.deployedVersion) return response.status(409).json({ error: 'This classifier has not been deployed.' })
   const deployment = classifier.deployments.find((item) => item.version === classifier.deployedVersion)
   if (!deployment) return response.status(409).json({ error: 'The active deployment could not be resolved.' })
   try {
     await reserveJevExecution(db, workspace)
-    const result = await callJev(state, deployment.questions)
+    const result = await callJev(state, deployment.questions, deployment.language)
     await recordApiCall(db, { timestamp: new Date(), requestId, workspaceId: request.workspaceId, classifierId, deploymentVersion: deployment.version, apiKeyId: request.apiKey.id, source: 'api', status: 'success', httpStatus: 200, latencyMs: Date.now() - startedAt })
     response.setHeader('X-Request-Id', requestId)
     response.json(result)
