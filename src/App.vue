@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Activity, Archive, ArchiveRestore, BarChart3, CheckCircle2, Clock3, Copy, Eye, Fingerprint, KeyRound, Languages, Layers3, LogOut, Plus, RefreshCw, Rocket, Send, Trash2, Users } from '@lucide/vue'
 import { supportedLocales } from '@/i18n'
+import studioPreview from '../docs/screenshots/studio-builder.png'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -431,20 +432,29 @@ onMounted(async () => {
 
   <section v-else-if="!auth.authenticated" class="auth-screen">
     <div class="auth-brand"><span class="brand-bars"><i></i><i></i><i></i></span><span>Jev-It <b>Studio</b></span></div>
-    <label class="locale-picker auth-locale"><Languages aria-hidden="true" /><span class="sr-only">{{ t('common.language') }}</span><select v-model="locale"><option v-for="item in supportedLocales" :key="item.code" :value="item.code">{{ item.label }}</option></select></label>
-    <div class="auth-copy">
-      <span class="overline">{{ t('auth.overline') }}</span>
-      <h1>{{ t('auth.title') }}<br><em>{{ t('auth.titleEm') }}</em></h1>
-      <p>{{ t('auth.description') }}</p>
-      <Button v-if="health.mongo && health.authConfigured" as-child class="google-button">
-        <a href="/api/auth/google"><span>G</span> {{ t('auth.continueGoogle') }} <b>→</b></a>
-      </Button>
-      <div v-else class="auth-setup">
-        <b>{{ !health.mongo ? t('auth.mongoMissing') : t('auth.googleMissing') }}</b>
-        <code v-if="!health.authConfigured">GOOGLE_CLIENT_ID=…<br>GOOGLE_CLIENT_SECRET=…</code>
-        <Button type="button" @click="loadHealth().then(loadAuthSession)">{{ t('auth.check') }}</Button>
-      </div>
+    <div class="auth-actions">
+      <a class="github-link" href="https://github.com/ElMehdiBen/Jev-It" target="_blank" rel="noreferrer" :aria-label="t('auth.github')"><svg aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.3-5.28-1.29-5.28-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18A10.9 10.9 0 0 1 12 6.1c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.25c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg><span>{{ t('auth.github') }}</span></a>
+      <label class="locale-picker auth-locale"><Languages aria-hidden="true" /><span class="sr-only">{{ t('common.language') }}</span><select v-model="locale"><option v-for="item in supportedLocales" :key="item.code" :value="item.code">{{ item.label }}</option></select></label>
     </div>
+    <div class="auth-content">
+      <div class="auth-copy">
+        <span class="overline">{{ t('auth.overline') }}</span>
+        <h1>{{ t('auth.title') }}<br><em>{{ t('auth.titleEm') }}</em></h1>
+        <p>{{ t('auth.description') }}</p>
+        <Button v-if="health.mongo && health.authConfigured" as-child class="google-button">
+          <a href="/api/auth/google"><span>G</span> {{ t('auth.continueGoogle') }} <b>→</b></a>
+        </Button>
+        <div v-else class="auth-setup">
+          <b>{{ !health.mongo ? t('auth.mongoMissing') : t('auth.googleMissing') }}</b>
+          <code v-if="!health.authConfigured">GOOGLE_CLIENT_ID=…<br>GOOGLE_CLIENT_SECRET=…</code>
+          <Button type="button" @click="loadHealth().then(loadAuthSession)">{{ t('auth.check') }}</Button>
+        </div>
+      </div>
+      <figure class="auth-preview">
+        <div><span><i></i>{{ t('auth.previewLabel') }}</span><span>JEV-IT / STUDIO</span></div>
+        <img :src="studioPreview" :alt="t('auth.previewAlt')">
+      </figure>
+      </div>
     <div class="auth-foot"><span>{{ t('auth.freeClassifiers') }}</span><span>{{ t('auth.monthlyCalls') }}</span><span>{{ t('auth.privateWorkspace') }}</span></div>
   </section>
 
