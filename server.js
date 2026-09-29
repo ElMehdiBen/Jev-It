@@ -24,7 +24,7 @@ const platformAdminEmails = new Set(String(process.env.PLATFORM_ADMIN_EMAILS || 
 const googleAuthorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth'
 const googleTokenEndpoint = 'https://oauth2.googleapis.com/token'
 const googleJwksEndpoint = 'https://www.googleapis.com/oauth2/v3/certs'
-const supportedClassifierLanguages = new Set(['auto', 'en', 'fr', 'ar'])
+const supportedClassifierLanguages = new Set(['auto', 'en', 'fr'])
 let googleJwks = { expiresAt: 0, keys: [] }
 
 app.disable('x-powered-by')
@@ -95,19 +95,15 @@ function classifierLanguage(value, fallback = 'auto') {
 
 function builderGreeting(language) {
   if (language === 'fr') return 'Quelle décision votre classificateur doit-il prendre ? Décrivez les données qu’il recevra et ce que votre logiciel doit savoir.'
-  if (language === 'ar') return 'ما القرار الذي تريد من المصنّف اتخاذه؟ أخبرني عن المدخلات التي سيتلقاها وما الذي يحتاج برنامجك إلى معرفته.'
   return 'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.'
 }
 
 function isBuilderGreeting(message, index) {
-  if (message?.kind === 'greeting') return true
-  if (index !== 0 || message?.role !== 'assistant') return false
-  return ['en', 'fr', 'ar'].some((language) => message.content === builderGreeting(language))
+  return message?.kind === 'greeting' || (index === 0 && message?.role === 'assistant')
 }
 
 function languagePolicy(language) {
   if (language === 'fr') return 'Respond in French. Write the classifier name, description, instructions, option descriptions, and score levels in French. Keep machine-readable keys in ASCII snake_case.'
-  if (language === 'ar') return 'Respond in Arabic. Write the classifier name, description, instructions, option descriptions, and score levels in Arabic. Keep machine-readable keys in ASCII snake_case.'
   if (language === 'en') return 'Respond in English. Write the classifier name, description, instructions, option descriptions, and score levels in English. Keep machine-readable keys in ASCII snake_case.'
   return 'Follow the language used by the user. Preserve that language throughout the classifier. If the use case is multilingual, write language-neutral evaluation instructions where possible. Keep machine-readable keys in ASCII snake_case.'
 }
@@ -116,7 +112,6 @@ export function questionsForJev(questions = {}, language = 'auto') {
   const directives = {
     en: 'Interpret the supplied state in English.',
     fr: 'Interprétez l’état fourni en français.',
-    ar: 'فسّر الحالة المقدمة باللغة العربية.',
   }
   const directive = directives[classifierLanguage(language)]
   if (!directive) return questions

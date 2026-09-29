@@ -47,11 +47,16 @@ const analyticsLoading = ref(false)
 watch(locale, (value) => {
   localStorage.setItem('jev_locale', value)
   document.documentElement.lang = value
-  document.documentElement.dir = value === 'ar' ? 'rtl' : 'ltr'
+  document.documentElement.dir = 'ltr'
 }, { immediate: true })
+
+function normalizeClassifierLanguage(value) {
+  return ['auto', 'en', 'fr'].includes(value) ? value : 'auto'
+}
 
 const questionEntries = computed(() => Object.entries(classifierDraft.value?.questions || {}))
 const draftEntries = computed(() => Object.entries(draft.value?.questions || {}))
+const draftName = computed(() => ['New classifier', 'Nouveau classificateur'].includes(draft.value?.name) ? t('builder.newClassifier') : draft.value?.name)
 const deployedSnapshot = computed(() => selected.value?.deployments?.find((item) => item.version === selected.value.deployedVersion))
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -59,7 +64,7 @@ function canonicalize(value) {
   return value
 }
 function classifierContent(value) {
-  return canonicalize({ name: String(value?.name || '').trim(), description: String(value?.description || '').trim(), language: value?.language || 'auto', questions: value?.questions || {} })
+  return canonicalize({ name: String(value?.name || '').trim(), description: String(value?.description || '').trim(), language: normalizeClassifierLanguage(value?.language), questions: value?.questions || {} })
 }
 const hasUnsavedChanges = computed(() => Boolean(selected.value && classifierDraft.value)
   && JSON.stringify(classifierContent(classifierDraft.value)) !== JSON.stringify(classifierContent(selected.value)))
@@ -73,7 +78,6 @@ function questionsForLanguage(questions = {}, language = 'auto') {
   const directives = {
     en: 'Interpret the supplied state in English.',
     fr: 'Interprétez l’état fourni en français.',
-    ar: 'فسّر الحالة المقدمة باللغة العربية.',
   }
   const directive = directives[language]
   if (!directive) return questions
@@ -107,14 +111,8 @@ async function api(path, options = {}) {
   return data
 }
 
-const knownBuilderGreetings = new Set([
-  'What decision do you want your classifier to make? Tell me about the input it will receive and what your software needs to know.',
-  'Quelle décision votre classificateur doit-il prendre ? Décrivez les données qu’il recevra et ce que votre logiciel doit savoir.',
-  'ما القرار الذي تريد من المصنّف اتخاذه؟ أخبرني عن المدخلات التي سيتلقاها وما الذي يحتاج برنامجك إلى معرفته.',
-])
-
 function messageContent(message, index) {
-  return message.kind === 'greeting' || (index === 0 && message.role === 'assistant' && knownBuilderGreetings.has(message.content)) ? t('builder.greeting') : message.content
+  return message.kind === 'greeting' || (index === 0 && message.role === 'assistant') ? t('builder.greeting') : message.content
 }
 
 function notify(message) {
@@ -234,7 +232,7 @@ async function openClassifier(classifierId) {
   classifierDraft.value = null
   try {
     selected.value = await api(`/api/classifiers/${classifierId}`)
-    selected.value.language ||= 'auto'
+    selected.value.language = normalizeClassifierLanguage(selected.value.language)
     classifierDraft.value = JSON.parse(JSON.stringify(selected.value))
     testInput.value = ''
     testResults.value = []
@@ -257,7 +255,6 @@ function changeQuestionType(question) {
   const defaults = {
     en: { first: 'First outcome', second: 'Second outcome', low: 'Low', medium: 'Medium', high: 'High' },
     fr: { first: 'Premier résultat', second: 'Deuxième résultat', low: 'Faible', medium: 'Moyen', high: 'Élevé' },
-    ar: { first: 'النتيجة الأولى', second: 'النتيجة الثانية', low: 'منخفض', medium: 'متوسط', high: 'مرتفع' },
   }[language] || { first: 'First outcome', second: 'Second outcome', low: 'Low', medium: 'Medium', high: 'High' }
   if (question.type === 'choice') question.criteria = { option_a: defaults.first, option_b: defaults.second }
   else if (question.type === 'score') question.criteria = [defaults.low, defaults.medium, defaults.high]
@@ -268,7 +265,7 @@ function addQuestion() {
   let index = questionEntries.value.length + 1
   while (classifierDraft.value.questions[`question_${index}`]) index += 1
   const language = classifierDraft.value?.language === 'auto' ? locale.value : classifierDraft.value?.language
-  const instructions = { en: 'The state meets this condition.', fr: 'L’état remplit cette condition.', ar: 'تستوفي الحالة هذا الشرط.' }[language] || 'The state meets this condition.'
+  const instructions = { en: 'The state meets this condition.', fr: 'L’état remplit cette condition.' }[language] || 'The state meets this condition.'
   classifierDraft.value.questions[`question_${index}`] = { type: 'noul', instructions }
 }
 
@@ -282,12 +279,12 @@ function addChoice(question) {
   let index = Object.keys(question.criteria || {}).length + 1
   while (question.criteria[`option_${index}`]) index += 1
   const language = classifierDraft.value?.language === 'auto' ? locale.value : classifierDraft.value?.language
-  question.criteria[`option_${index}`] = { en: 'Describe this outcome', fr: 'Décrivez ce résultat', ar: 'صِف هذه النتيجة' }[language] || 'Describe this outcome'
+  question.criteria[`option_${index}`] = { en: 'Describe this outcome', fr: 'Décrivez ce résultat' }[language] || 'Describe this outcome'
 }
 
 function addScoreLevel(question) {
   const language = classifierDraft.value?.language === 'auto' ? locale.value : classifierDraft.value?.language
-  question.criteria.push({ en: 'New level', fr: 'Nouveau niveau', ar: 'مستوى جديد' }[language] || 'New level')
+  question.criteria.push({ en: 'New level', fr: 'Nouveau niveau' }[language] || 'New level')
 }
 
 function renameChoice(question, oldKey, value) {
@@ -568,7 +565,7 @@ onMounted(async () => {
             </div>
             <div class="draft-identity">
               <span>{{ t('builder.classifierName') }}</span>
-              <h2>{{ draft.name }}</h2>
+              <h2>{{ draftName }}</h2>
               <p>{{ draft.description || t('builder.purposePending') }}</p>
             </div>
             <div class="draft-questions">
