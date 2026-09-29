@@ -1,0 +1,108 @@
+name: jev-it
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    entrypoint: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env.production}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env.production}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - edge
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging: *default-logging
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?Set TYPESAFE_API_KEY in .env.production}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env.production}
+      TYPESAFE_MODEL: ${TYPESAFE_MODEL:-jev-latest}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-luna}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env.production}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env.production}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:?Set GOOGLE_REDIRECT_URI in .env.production}
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-jev_studio}
+      MONGODB_URI: mongodb://${MONGO_APP_USERNAME:?Set MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD}@mongo:27017/${MONGODB_DATABASE:-jev_studio}?authSource=${MONGODB_DATABASE:-jev_studio}
+    expose:
+      - "3001"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - edge
+      - database
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>r.json()).then(b=>{if(!b.mongo)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  mongo:
+    image: mongodb/mongodb-community-server:8.0-ubi8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env.production}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env.production}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?Set MONGO_APP_USERNAME in .env.production}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in .env.production}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-jev_studio}
+    volumes:
+      - mongo_data:/data/db
+      - ./docker/mongo/init-app-user.sh:/docker-entrypoint-initdb.d/10-init-app-user.sh:ro
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host 127.0.0.1 --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval \"quit(db.adminCommand('ping').ok ? 0 : 2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *default-logging
+
+networks:
+  edge:
+  database:
+    internal: true
+
+volumes:
+  mongo_data:
+  caddy_data:
+  caddy_config:
