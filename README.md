@@ -1,8 +1,36 @@
 # Jev-It
 
-**Jev-It Studio for building classifiers at the speed of conversation.**
+**Jev-It Studio — build classifiers at the speed of conversation.**
 
-Jev-It is a workspace for building, testing, versioning, and deploying reusable TypeSafe AI JEV classifiers.
+Jev-It turns a conversation about a decision you need to make into a reusable TypeSafe AI JEV classifier. Describe the outcome you want, review the generated typed questions, test them against real examples, then deploy an immutable version behind a workspace API key—or copy the exact request and call JEV directly.
+
+## Product tour
+
+### Build by conversation
+
+The AI builder works alongside the structured draft, so every generated Choice, Score, or Noul question remains visible and editable before the classifier is created.
+
+![Jev-It Studio conversational classifier builder with a structured draft](docs/screenshots/studio-builder.png)
+
+### Integrate your way
+
+Each deployment includes ready-to-copy requests for the managed Jev-It endpoint and the direct TypeSafe API, including the exact deployed input JSON.
+
+![Jev-It Studio API integration page with managed and direct request examples](docs/screenshots/api-integration.png)
+
+### Understand usage
+
+Workspace analytics show quota consumption, success rate, latency, daily activity, and usage by classifier without retaining states or model responses.
+
+![Jev-It Studio workspace usage analytics dashboard](docs/screenshots/usage-analytics.png)
+
+## How it works
+
+1. Describe the classification decision in a conversation.
+2. Review and edit the generated JEV questions and answer types.
+3. Test one state or a batch without saving the test inputs or responses.
+4. Deploy a content-idempotent, immutable snapshot and roll back when needed.
+5. Call the active version through Jev-It or copy its payload for direct JEV use.
 
 ## What it does
 
@@ -19,6 +47,13 @@ Jev-It is a workspace for building, testing, versioning, and deploying reusable 
 - Authenticates users with Google SSO and isolates every resource by workspace.
 - Enforces Free plan classifier and monthly JEV-call quotas.
 - Tracks privacy-conscious usage analytics without storing input states or model responses.
+
+## Technology
+
+- Vue 3, Vite, Tailwind CSS, and shadcn-vue for the Studio interface.
+- Node.js and Express for authentication, classifier management, and API orchestration.
+- MongoDB for workspace-scoped classifiers, deployments, sessions, keys, and usage aggregates.
+- OpenAI for the conversational builder and TypeSafe AI JEV for classifier execution.
 
 ## Setup
 
