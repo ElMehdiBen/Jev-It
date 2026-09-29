@@ -152,11 +152,12 @@ npm run db:dedupe-deployments -- --apply
 ## Production
 
 ```bash
-npm run build
-npm start
+cp .env.production.example .env.production
+# Fill in the production domain, independent MongoDB passwords, and provider credentials.
+docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ```
 
-Express serves the compiled Vue application and all API routes on port `3001` by default.
+The production stack builds the Vue application into a minimal non-root Node image, places it behind Caddy with automatic HTTPS, and runs authenticated MongoDB on a private Docker network with no published database port. See the complete [production deployment guide](docs/DEPLOYMENT.md) for DNS, Google OAuth, secrets, backups, updates, firewall rules, and operations.
 
 ## Contributing
 
