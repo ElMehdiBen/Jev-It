@@ -9,6 +9,5 @@ dist
 .env.*
 npm-debug.log*
 compose*.yml
-docs
 README.md
 CONTRIBUTING.md

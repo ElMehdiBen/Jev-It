@@ -7,6 +7,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY index.html jsconfig.json vite.config.js components.json ./
 COPY public ./public
+COPY docs/screenshots/studio-builder.png ./docs/screenshots/studio-builder.png
 COPY src ./src
 RUN npm run build
 
