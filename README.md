@@ -40,13 +40,17 @@ Workspace analytics show quota consumption, success rate, latency, daily activit
 - Allows full manual editing after creation.
 - Runs ephemeral single-state or batch tests against JEV.
 - Deploys immutable versions and allows instant rollback to any previous version.
+- Archives classifiers without losing deployments or analytics, restores them when quota is available, and permits permanent deletion only from the archive.
 - Exposes a protected `/api/classify` endpoint that resolves the active deployment.
 - Exports the exact deployed request structure for direct TypeSafe/JEV API calls.
+- Builds copy-ready managed API examples from the current deployment URL rather than a hard-coded localhost address.
 - Shows both readable classifier answers and the complete raw JEV response.
 - Generates rotatable `jv_live_...` project keys and stores only SHA-256 hashes.
 - Authenticates users with Google SSO and isolates every resource by workspace.
 - Enforces Free plan classifier and monthly JEV-call quotas.
 - Tracks privacy-conscious usage analytics without storing input states or model responses.
+- Localizes the Studio in English, French, and Arabic, persists the chosen locale, and provides a native RTL layout for Arabic.
+- Gives each classifier an explicit English, French, Arabic, or automatic/multilingual language policy that is preserved in every deployment.
 
 ## Technology
 
@@ -95,6 +99,17 @@ On first sign-in, Jev-It creates a personal Free workspace. Existing unowned dat
 - Validated requests reserve quota before contacting JEV; requests rejected before that point do not consume quota.
 - Raw API-call analytics are retained for 90 days, while daily aggregates are retained indefinitely.
 
+## Classifier lifecycle and language
+
+Archiving a classifier immediately disables its production endpoint and releases its active-classifier quota slot. Its immutable deployment history and usage analytics remain available. Restoring it reclaims a slot and resumes its previously active deployment; if the workspace is at its plan limit, another classifier must be archived first. Permanent deletion is deliberately available only from the archive. Historical aggregate analytics are retained and identify the removed classifier as deleted.
+
+The Studio interface supports English, French, and Arabic. The locale selector changes interface copy, date formatting, and document direction, and the choice is saved in the browser. Classifier language is separate from interface language:
+
+- **English, French, or Arabic** keeps builder responses and all human-readable classifier content in that language. During execution, JEV receives an explicit instruction to interpret the state in that language.
+- **Automatic / multilingual** follows the language used in the builder conversation and does not force an execution language, making it suitable for mixed-language inputs.
+
+Machine-readable question and option keys remain ASCII `snake_case` in every mode so integrations are stable across languages. Because language is part of an immutable deployment snapshot, changing it requires deploying the saved draft before production behavior changes.
+
 ## Docker development (recommended)
 
 The development stack runs the Vue frontend, Express API, and MongoDB with persistent data and hot reload:
@@ -141,6 +156,8 @@ curl -X POST http://127.0.0.1:3001/api/classify \
 ```
 
 The endpoint returns the complete raw TypeSafe/JEV response. Draft edits do not affect this endpoint until a new version is explicitly deployed.
+
+The API page in Jev-It Studio renders this request with the browser's current origin, so a production installation automatically shows its public HTTPS URL. If the application is served below a URL path prefix, make sure the reverse proxy preserves that prefix or adjust the copied endpoint accordingly.
 
 Deployments are content-idempotent. Deploying an unchanged saved draft reuses its existing immutable version, including under concurrent requests. To audit older databases and remove exact duplicate snapshots while preserving the active version, run a dry check before applying the cleanup:
 

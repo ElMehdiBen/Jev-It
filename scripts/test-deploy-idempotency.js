@@ -51,6 +51,13 @@ try {
   if (classifier.deployments.length !== 1 || classifier.deploymentEvents.length !== 1 || classifier.deployedVersion !== 1) {
     throw new Error('Concurrent deployment created duplicate snapshots or events.')
   }
+
+  await db.collection('classifiers').updateOne({ id: ids.classifier }, { $set: { language: 'fr', updatedAt: new Date() } })
+  const languageDeployment = await deploy()
+  if (languageDeployment.status !== 201) throw new Error(`Expected a language change to create a deployment; received ${languageDeployment.status}`)
+  const languageBody = await languageDeployment.json()
+  if (languageBody.version !== 2 || languageBody.language !== 'fr') throw new Error('Classifier language was not preserved in the immutable deployment.')
+
   console.log('Deployment idempotency integration test passed.')
 } finally {
   if (connected) {
