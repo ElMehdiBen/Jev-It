@@ -926,19 +926,68 @@ app.get('/api/admin/analytics', handleRoute(async (request, response) => {
         { $group: { _id: '$workspaceId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
         { $sort: { calls: -1 } },
       ],
+      byClassifier: [
+        { $group: { _id: '$classifierId', calls: { $sum: 1 }, successes: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } }, failures: { $sum: { $cond: [{ $ne: ['$status', 'success'] }, 1, 0] } }, averageLatencyMs: { $avg: '$latencyMs' } } },
+        { $sort: { calls: -1 } },
+      ],
     } },
   ]).toArray()
-  const [workspaces, users] = await Promise.all([
+  const [workspaces, users, memberships, classifiers] = await Promise.all([
     db.collection('workspaces').find({}, { projection: { _id: 0, id: 1, name: 1, plan: 1, usage: 1, createdAt: 1 } }).sort({ createdAt: -1 }).toArray(),
-    db.collection('users').countDocuments(),
+    db.collection('users').find({}, { projection: { _id: 0, id: 1, name: 1, email: 1, picture: 1, createdAt: 1, lastLoginAt: 1 } }).sort({ createdAt: -1 }).toArray(),
+    db.collection('workspace_memberships').find({}, { projection: { _id: 0, userId: 1, workspaceId: 1, role: 1 } }).toArray(),
+    db.collection('classifiers').find({}, { projection: { _id: 0, id: 1, workspaceId: 1, name: 1, description: 1, language: 1, deployedVersion: 1, archivedAt: 1, createdAt: 1, updatedAt: 1 } }).sort({ createdAt: -1 }).toArray(),
   ])
   const usage = Object.fromEntries(analytics.byWorkspace.map((row) => [row._id, row]))
+  const classifierUsage = Object.fromEntries(analytics.byClassifier.map((row) => [row._id, row]))
+  const classifiersByWorkspace = Object.groupBy(classifiers, (classifier) => classifier.workspaceId)
+  const workspacesById = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace]))
+  const membershipsByUser = Object.groupBy(memberships, (membership) => membership.userId)
+  const accountDetails = users.map((user) => ({
+    userId: user.id,
+    name: user.name,
+    email: user.email,
+    picture: user.picture,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    workspaces: (membershipsByUser[user.id] || []).map((membership) => {
+      const workspace = workspacesById[membership.workspaceId]
+      const workspaceUsage = usage[membership.workspaceId] || {}
+      return {
+        workspaceId: membership.workspaceId,
+        name: workspace?.name || 'Deleted workspace',
+        plan: workspace?.plan || 'unknown',
+        role: membership.role,
+        calls: workspaceUsage.calls || 0,
+        successes: workspaceUsage.successes || 0,
+        failures: workspaceUsage.failures || 0,
+        classifiers: (classifiersByWorkspace[membership.workspaceId] || []).map((classifier) => {
+          const classifierMetrics = classifierUsage[classifier.id] || {}
+          return {
+            id: classifier.id,
+            name: classifier.name,
+            description: classifier.description,
+            language: classifierLanguage(classifier.language),
+            deployedVersion: classifier.deployedVersion,
+            archived: Boolean(classifier.archivedAt),
+            createdAt: classifier.createdAt,
+            updatedAt: classifier.updatedAt,
+            calls: classifierMetrics.calls || 0,
+            successes: classifierMetrics.successes || 0,
+            failures: classifierMetrics.failures || 0,
+            averageLatencyMs: classifierMetrics.averageLatencyMs || 0,
+          }
+        }),
+      }
+    }),
+  }))
   const summary = analytics.summary[0] || { calls: 0, successes: 0, failures: 0, averageLatencyMs: 0, latencyPercentiles: [0, 0] }
   response.json({
     range: { from, to },
-    summary: { ...summary, p50LatencyMs: summary.latencyPercentiles?.[0] || 0, p95LatencyMs: summary.latencyPercentiles?.[1] || 0, latencyPercentiles: undefined, workspaces: workspaces.length, users },
+    summary: { ...summary, p50LatencyMs: summary.latencyPercentiles?.[0] || 0, p95LatencyMs: summary.latencyPercentiles?.[1] || 0, latencyPercentiles: undefined, workspaces: workspaces.length, users: users.length, classifiers: classifiers.length },
     timeline: analytics.timeline.map((item) => ({ date: item._id, calls: item.calls, successes: item.successes, failures: item.failures })),
     workspaces: workspaces.map((workspace) => ({ workspaceId: workspace.id, name: workspace.name, plan: workspace.plan, classifiers: workspace.usage?.activeClassifiers || 0, createdAt: workspace.createdAt, calls: usage[workspace.id]?.calls || 0, successes: usage[workspace.id]?.successes || 0, failures: usage[workspace.id]?.failures || 0, averageLatencyMs: usage[workspace.id]?.averageLatencyMs || 0 })).sort((left, right) => right.calls - left.calls),
+    accounts: accountDetails,
   })
 }))
 

@@ -410,6 +410,19 @@ function formatDate(value) {
   return value ? new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—'
 }
 
+function accountClassifierCount(account) {
+  return (account.workspaces || []).reduce((total, workspace) => total + (workspace.classifiers || []).length, 0)
+}
+
+function accountCallCount(account) {
+  return (account.workspaces || []).reduce((total, workspace) => total + (workspace.calls || 0), 0)
+}
+
+function adminClassifierStatus(classifier) {
+  if (classifier.archived) return t('analytics.archivedStatus')
+  return classifier.deployedVersion ? t('analytics.liveVersion', { version: classifier.deployedVersion }) : t('common.draft')
+}
+
 function answerValue(answer) {
   if (answer.type === 'choice') return answer.choice
   if (answer.type === 'score') return answer.score
@@ -826,6 +839,31 @@ onMounted(async () => {
               <div v-if="!adminAnalytics.workspaces.length" class="analytics-empty">{{ t('analytics.workspacesEmpty') }}</div>
             </article>
           </div>
+          <section v-if="analyticsScope === 'platform'" class="account-monitoring">
+            <div class="analytics-title"><div><span><Users aria-hidden="true" /> {{ t('analytics.accountMonitoring') }}</span><h2>{{ t('analytics.usersAndClassifiers') }}</h2><p>{{ t('analytics.accountMonitoringHelp') }}</p></div><small>{{ t('analytics.totalLabel', { count: adminAnalytics.accounts?.length || 0 }) }}</small></div>
+            <div v-if="adminAnalytics.accounts?.length" class="account-list">
+              <article v-for="account in adminAnalytics.accounts" :key="account.userId" class="account-card">
+                <div class="account-head">
+                  <Avatar class="admin-account-avatar"><AvatarImage v-if="account.picture" :src="account.picture" referrer-policy="no-referrer" /><AvatarFallback>{{ account.name.slice(0, 1) }}</AvatarFallback></Avatar>
+                  <div class="account-identity"><h3>{{ account.name }}</h3><p>{{ account.email }}</p><small>{{ t('analytics.joined', { date: formatDate(account.createdAt) }) }} · {{ account.lastLoginAt ? t('analytics.lastSeen', { date: formatDate(account.lastLoginAt) }) : t('analytics.neverSignedIn') }}</small></div>
+                  <div class="account-totals"><span><b>{{ accountClassifierCount(account) }}</b>{{ t('analytics.classifiers') }}</span><span><b>{{ accountCallCount(account) }}</b>{{ t('common.calls') }}</span></div>
+                </div>
+                <div v-for="workspace in account.workspaces" :key="workspace.workspaceId" class="account-workspace">
+                  <div class="account-workspace-head"><div><b>{{ workspace.name }}</b><small>{{ t('analytics.accountWorkspaceMeta', { plan: workspace.plan, role: workspace.role, calls: workspace.calls }) }}</small></div><code>{{ workspace.workspaceId }}</code></div>
+                  <div v-if="workspace.classifiers.length" class="admin-classifier-list">
+                    <div v-for="classifier in workspace.classifiers" :key="classifier.id" class="admin-classifier-row">
+                      <div><b>{{ classifier.name }}</b><small>{{ classifier.description || t('classifier.noDescription') }}</small><code>{{ classifier.id }}</code></div>
+                      <span :class="{ archived: classifier.archived, live: classifier.deployedVersion && !classifier.archived }">{{ adminClassifierStatus(classifier) }}</span>
+                      <div class="classifier-admin-metrics"><strong>{{ classifier.calls }}</strong><small>{{ t('analytics.classifierCalls') }}</small><small>{{ t('analytics.classifierSuccess', { count: classifier.successes }) }} · {{ Math.round(classifier.averageLatencyMs) }} ms</small></div>
+                    </div>
+                  </div>
+                  <div v-else class="account-no-classifiers">{{ t('analytics.noClassifiers') }}</div>
+                </div>
+                <div v-if="!account.workspaces.length" class="account-no-classifiers">{{ t('analytics.noWorkspace') }}</div>
+              </article>
+            </div>
+            <div v-else class="analytics-empty">{{ t('analytics.accountsEmpty') }}</div>
+          </section>
         </template>
       </section>
     </main>
