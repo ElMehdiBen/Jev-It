@@ -160,6 +160,9 @@ h1, h2, h3, h4, strong, b { font-weight: 600; }
 .api-example-title h3 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
 .api-example-title p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .code-actions { display: flex; align-items: center; gap: 18px; }
+.code-card button.copy-action { min-height: 30px; padding: 6px 10px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid #484842; border-radius: 4px; background: #242420; color: var(--orange); transition: border-color .18s ease, background .18s ease, color .18s ease; }
+.code-card button.copy-action svg { width: 13px; height: 13px; stroke-width: 1.9; }
+.code-card button.copy-action:hover { border-color: var(--orange); background: var(--orange); color: white; }
 .code-card button:disabled { opacity: .35; cursor: not-allowed; }
 .direct-jev-card pre { max-height: none; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
 .direct-jev-card.disabled { opacity: .65; }
@@ -191,6 +194,7 @@ h1, h2, h3, h4, strong, b { font-weight: 600; }
 .key-actions button:active { transform: translateY(1px); }
 .key-actions button.primary { justify-content: flex-start; }
 .key-actions button.primary span { margin-left: auto; }
+.key-card-head + .key-actions { margin-top: 28px; }
 .security-grid article { transition: background .18s ease; }
 .security-grid article:hover { background: #f7f4ed; }
 .security-grid span { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid rgba(255,91,34,.24); border-radius: 50%; }

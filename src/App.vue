@@ -624,7 +624,7 @@ onMounted(async () => {
                 <div><h3>Through Jev-It Studio</h3><p>Send only the classifier ID and state. The backend resolves the active deployment.</p></div>
               </div>
               <div class="code-card">
-                <div><span>cURL</span><button type="button" @click="copy(platformCurl)">Copy request</button></div>
+                <div><span>cURL</span><button class="copy-action" type="button" @click="copy(platformCurl)"><Copy aria-hidden="true" /> Copy request</button></div>
                 <pre><i>curl</i> -X POST http://localhost:3001/api/classify \
   -H <em>'Authorization: Bearer YOUR_PROJECT_KEY'</em> \
   -H <em>'Content-Type: application/json'</em> \
@@ -640,8 +640,8 @@ onMounted(async () => {
                 <div>
                   <span>POST /v1/systemone</span>
                   <span class="code-actions">
-                    <button type="button" :disabled="!deployedSnapshot" @click="copy(directJevPayload)">Copy input JSON</button>
-                    <button type="button" :disabled="!deployedSnapshot" @click="copy(directJevCurl)">Copy cURL</button>
+                    <button class="copy-action" type="button" :disabled="!deployedSnapshot" @click="copy(directJevPayload)"><Copy aria-hidden="true" /> Copy input JSON</button>
+                    <button class="copy-action" type="button" :disabled="!deployedSnapshot" @click="copy(directJevCurl)"><Copy aria-hidden="true" /> Copy cURL</button>
                   </span>
                 </div>
                 <pre v-if="deployedSnapshot"><i>curl</i> -X POST https://api.typesafe.ai/v1/systemone \
